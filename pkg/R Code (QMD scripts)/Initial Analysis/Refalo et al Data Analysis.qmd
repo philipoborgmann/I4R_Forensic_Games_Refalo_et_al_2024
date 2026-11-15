@@ -1,0 +1,1143 @@
+---
+title: Bayesian Modeling for Original Research Study Investigating the Influence of PTF on Quadriceps Hypertrophy
+author: Martin Refalo
+output: html
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+
+We will generate linear models using the `brms` package. Posterior draws will be extracted using `tidybayes` and the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given protocol will be calculated manually by examining the proportion of posterior draws that meets the criteria of interest (e.g., >0 or >TE)  For normally distributed data, Bayesian linear models will be generated to assess mean differences between protocols, with the pre-intervention or first set value assigned as a covariate for models assessing change in muscle thickness from pre-to post-intervention.
+
+## Load libraries
+
+First we load the libraries we need and set up our working environment.
+
+```{r}
+#| label: Set up environment
+
+library(tidyverse) # Data wrangling, plotting
+library(brms) # Bayesian estimation
+library(tidybayes) # 'Tidy' results
+library(bayesplot) # Convenient plotting
+library(ggridges) # For forest plot
+library(readxl) # To read data files
+library(rstan) # Bayesian modelling
+library(ggplot2) # For plots
+library(posterior)# Posterior distributions
+library(glue) # For plots
+library(ggpubr) # For Plots
+library (bayestestR) # For probability of direction
+library(emmeans) # For contrasts
+library(rstatix) # Assess normality
+library(gt) # Tables
+library(dplyr) # Data frames
+library(ggh4x) # For plots
+library(datawizard) # Data wrangling
+library(patchwork) # For plots
+library(lme4) # Traditional modelling
+library(performance) # Model quality
+
+```
+
+## Muscle hypertrophy
+
+To assess differences in muscle hypertrophy between the FAIL and RIR protocols, a linear model will be generated with the following response variable: 
+
+  1) Change in Muscle Thickness (from pre- to post-intervention)
+  
+One additional interaction factor will be added into the model:
+
+  1) Muscle measured (RF or VL)
+
+This model will account for baseline differences in muscle size and differences between the muscles measured, which is important, especially considering we have a sample of males and females and specific muscles may respond differently to exercises. Group level slope structure for each participant will involve 'protocol' and each limb will be nested within each participant.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of the change in muscle thickness (from pre- to post-intervention) for FAIL and RIR protocols and the complete posterior distributions.
+
+```{r}
+#| label: Bayesian linear modelling
+
+model.matrix(muscle.thickness ~ protocol * muscle + Pre, data = rf_vl_master) # Assess model matrix
+
+# Generate model
+MT_model <- brm(muscle.thickness ~ protocol * muscle + Pre + (protocol|id) + (1|id:limb),
+                data = rf_vl_master,
+                seed = 123,
+                control = list(adapt_delta=0.99))
+summary(MT_model)
+                
+#plot(MT_model) # Preliminary diagnostics
+
+```
+
+Calculate Bayesian estimates generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# By protocol only
+MT_effects <- emmeans(MT_model, ~ protocol, weights = "prop")
+  hpd.summary(MT_effects, point.est = mean) # Display mean
+  
+MT_effects_contrast <- pairs(emmeans(MT_model, ~ protocol, weights = "prop"))
+  hpd.summary(MT_effects_contrast, point.est = mean) # Display mean
+  
+MT_effects_GG <- emmeans(MT_model, spec = ~protocol, weights = "prop") %>% gather_emmeans_draws() # For ggplot
+
+MT_effects_contrast_GG <- pairs(emmeans(MT_model, ~ protocol, weights = "prop")) %>% gather_emmeans_draws() # For ggplot
+
+# By protocol and muscle and contrast for each muscle
+MT_effects_muscle <- emmeans(MT_model, ~ protocol|muscle, weights = "prop")
+  hpd.summary(MT_effects_muscle, point.est = mean) # Display mean
+  
+MT_effects_contrast_muscle <- pairs(emmeans(MT_model, ~ protocol|muscle, weights = "prop"))
+  hpd.summary(MT_effects_contrast_muscle, point.est = mean) # Display mean
+  
+MT_effects_GG_muscle <- emmeans(MT_model, spec = ~protocol|muscle, weights = "prop") %>% gather_emmeans_draws() # For ggplot
+
+MT_effects_GG_contrast_muscle <- pairs(emmeans(MT_model, ~ protocol|muscle, weights = "prop")) %>% gather_emmeans_draws() # For ggplot
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot of the posterior distributions for each protocol and each muscle, along with the contrast for each muscle.
+
+1) By protocol (averaged over RF and VL)
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(MT_effects_GG, aes(x = .value, y = protocol, fill = protocol)) + 
+     geom_rect(data=NULL,aes(xmin=te_avg,xmax=1,ymin=-Inf,ymax=Inf),
+                    fill="#F5F5F5") +
+    geom_vline(
+    xintercept = 0 + te_avg,
+    colour = 'grey',
+    linetype = 'dashed',
+    linewidth = .8) + 
+  geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = .8) +
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+    scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.1, 0.0, 0.1, 0.2, 0.3)) +
+  coord_cartesian(xlim = c(-0.12, 0.37), ylim = c(1.2,2.5)) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+    
+```
+
+2) Contrast for protocol
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(data = MT_effects_contrast_GG,
+       aes(x=.value,
+           y=contrast, fill = after_stat(x < 0))) +
+  scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  geom_rect(aes(xmin=-te_avg,xmax=-Inf,ymin=stage("FAIL - RIR", after_scale = ymin-Inf), ymax=stage("FAIL - RIR", after_scale = ymax+Inf)),
+                    fill="#F5F5F5") +
+    geom_rect(aes(xmin=te_avg,xmax=Inf,ymin=stage("FAIL - RIR", after_scale = ymin-Inf), ymax=stage("FAIL - RIR", after_scale = ymax+Inf)),
+                    fill="#F5F5F5") +
+    geom_vline(aes(xintercept = te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+      geom_vline(aes(xintercept = -te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+    stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+    stat_pointinterval(point_interval = "mean_hdci",.width = .95) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+      geom_vline(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8)+
+  coord_cartesian(xlim = c(-0.22, 0.23), ylim = c(1,1.8)) +
+  scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.20, -0.10,0, 0.10, 0.20)) +
+  theme(
+          strip.background = element_rect(
+      color = "white",
+      fill = "white",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 12,
+      color = "white",
+      face = "bold"
+    ),
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),panel.spacing = unit(.4, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+3) By protocol and muscle
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(MT_effects_GG_muscle, aes(x = .value, y = protocol, fill = protocol)) + 
+    facet_grid(~muscle,scales = "free")+
+    geom_rect(data = MT_effects_GG_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+               aes(xmin=rf_te_avg,xmax=0.415,ymin=stage("FAIL", after_scale = ymin-0.38),ymax=stage("FAIL", after_scale = ymin+2.08)),
+                    fill="#F5F5F5") +
+       geom_rect(data = MT_effects_GG_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+               aes(xmin=vl_te_avg,xmax=0.415,ymin=stage("FAIL", after_scale = ymin-0.38),ymax=stage("FAIL", after_scale = ymin+2.08)),
+                    fill="#F5F5F5") +
+    geom_vline(data = MT_effects_GG_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8) + 
+  geom_vline(data = MT_effects_GG_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+             aes(xintercept = rf_te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+  geom_vline(data = MT_effects_GG_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8) + 
+  geom_vline(data = MT_effects_GG_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+             aes(xintercept = vl_te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+    scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.1, 0.0, 0.1, 0.2, 0.3, 0.4)) +
+  coord_cartesian(xlim = c(-0.12, 0.42), ylim = c(1.2,2.5)) +
+  theme(
+     strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6
+    ), panel.spacing = unit(.4, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+    
+```
+
+4) Contrast for each muscle
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(data = MT_effects_GG_contrast_muscle,
+       aes(x=.value,
+           y=contrast, fill = after_stat(x < 0))) +
+  facet_grid(~muscle,scales = "free")+
+  scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+       geom_rect(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+               aes(xmin=-rf_te_avg,xmax=-0.216,ymin=stage("FAIL - RIR", after_scale = ymin-0.57), ymax=stage("FAIL - RIR", after_scale = ymax+1.37)),
+                    fill="#F5F5F5") +
+  geom_rect(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+               aes(xmin=rf_te_avg,xmax=0.226,ymin=stage("FAIL - RIR", after_scale = ymin-0.57),ymax=stage("FAIL - RIR", after_scale = ymax+1.37)),
+                    fill="#F5F5F5") +
+  geom_rect(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+               aes(xmin=-vl_te_avg,xmax=-0.216,ymin=stage("FAIL - RIR", after_scale = ymin-0.57),ymax=stage("FAIL - RIR", after_scale = ymax+1.37)),
+                    fill="#F5F5F5") +
+  geom_rect(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+               aes(xmin=vl_te_avg,xmax=0.226,ymin=stage("FAIL - RIR", after_scale = ymin-0.57),ymax=stage("FAIL - RIR", after_scale = ymax+1.37)),
+                    fill="#F5F5F5") +
+  geom_vline(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+             aes(xintercept = rf_te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+  geom_vline(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Rectus Femoris"),
+             aes(xintercept = -rf_te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8)+
+  geom_vline(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+             aes(xintercept = vl_te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+  geom_vline(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+             aes(xintercept = -vl_te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+    stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+    stat_pointinterval(point_interval = "mean_hdci",.width = .95) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+    geom_vline(data = MT_effects_GG_contrast_muscle%>%
+               filter(muscle=="Vastus Lateralis"),
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8)+
+  coord_cartesian(xlim = c(-0.22, 0.23), ylim = c(1,1.8)) +
+  scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.20, -0.10,0, 0.10, 0.20)) +
+  theme(
+          strip.background = element_rect(
+      color = "white",
+      fill = "white",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 12,
+      color = "white",
+      face = "bold"
+    ),
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+     panel.background = element_rect(
+      fill = 'white',
+      color = 'black',
+      linewidth = 1.6
+    ),panel.spacing = unit(.4, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given protocol by examining the proportion of posterior draws that met the criteria of interest (e.g., either >0 or >TE)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By protocol
+emmeans(MT_model, ~ protocol, weights = "prop")%>%
+gather_emmeans_draws()%>%
+group_by(protocol)%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# By protocol over TE
+emmeans(MT_model, ~ protocol, weights = "prop")%>%
+gather_emmeans_draws()%>%
+group_by(protocol)%>%
+summarise(pd=round(mean(.value>te_avg,na.rm=TRUE)*100,0))
+
+# By protocol and muscle over TE for RF
+emmeans(MT_model, ~ protocol|muscle, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>rf_te_avg,na.rm=TRUE)*100,0))
+
+# By protocol and muscle over TE for VL
+emmeans(MT_model, ~ protocol|muscle, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>vl_te_avg,na.rm=TRUE)*100,0))
+
+# Contrast for protocol (>o)
+pairs(emmeans(MT_model, ~protocol, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+group_by(contrast)%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# Contrast for protocol (>TE)
+pairs(emmeans(MT_model, ~protocol, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+group_by(contrast)%>%
+summarise(pd=round(mean(.value>te_avg,na.rm=TRUE)*100,0))
+
+# Contrast for protocol by RF (<0)
+pairs(emmeans(MT_model, ~protocol|muscle, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# Contrast for protocol by VL (>0)
+pairs(emmeans(MT_model, ~protocol|muscle, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# Contrast for protocol by RF (<TE)
+pairs(emmeans(MT_model, ~protocol|muscle, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<(-rf_te_avg),na.rm=TRUE)*100,0))
+
+# Contrast for protocol by VL (>TE)
+pairs(emmeans(MT_model, ~protocol|muscle, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>vl_te_avg,na.rm=TRUE)*100,0))
+
+```
+
+
+## Lifting Velocity
+
+To assess differences in loss of lifting velocity between the FAIL and RIR protocols, a linear model will be generated with the following response variable:
+
+  1) Change in lifting velocity (first to final set) calculated as a percentage value
+  
+One additional interaction factors will be added into the model:
+
+  1) Time point (WEEK 1, WEEK 4, WEEK 8)
+
+This model will account for the absolute lifting velocity of the first set (as this value could influence the percentage change), total number of sets performed, and participant sex, and will allow us to investigate an interaction effect, which is important, as measurements of lifting velocity were taken at WEEKS 1, 4 and 8. Group level slope structure for each participant will involve 'protocol * time + first_set + sets' and each limb will be nested within each participant.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of the change in lifting velocity (first to final set) for FAIL and RIR protocols.
+
+```{r}
+#| label: Bayesian linear modelling
+
+model.matrix(lifting_velocity ~ 1 + protocol * time + first_set + sets, data = vl_master) # Assess model matrix
+
+LV_model <- brm(percent_diff ~ protocol * time + sex + first_set + sets + (protocol * time + first_set + sets|id) + (1|id:limb),
+                data = vl_master,
+                seed = 123,
+                control = list(adapt_delta=0.99))
+summary(LV_model)
+
+#plot(LV_model) # Preliminary diagnostics
+
+```
+
+Calculate Bayesian estimates (and contrast estimates) generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# Means for protocol and time
+LV_effects <- emmeans(LV_model, ~ protocol*time, point.est = mean)
+  hpd.summary(LV_effects, point.est = mean) # Display mean
+
+LV_effects_full <- pairs(emmeans(LV_model, ~ time*protocol, point.est = mean))
+
+# Contrasts for protocol and time
+LV_effects_contrasts <- emmeans(LV_model, ~protocol * time)
+  hpd.summary(LV_effects_contrasts, point.est = mean) # Display mean
+
+LV_effects_time <- pairs(LV_effects_contrasts, by = "time") 
+  hpd.summary(LV_effects_time, point.est = mean) # Display mean
+
+LV_effects_protocol <- pairs(LV_effects_contrasts, by = "protocol")
+  
+LV_effects_time_GG <- pairs(LV_effects_contrasts, by = "time") %>% gather_emmeans_draws() # For ggplot
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot to display posterior distributions for the contrast between FAIL and RIR for each time point. The values generated represent the difference between FAIL and RIR. Negative values represent greater decreases in lifting velocity for FAIL versus RIR.
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(LV_effects_time_GG, aes(x = .value, y = factor(time, level=c('WEEK 8', 'WEEK 4', 'WEEK 1')), fill = stat(x < 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) + scale_x_continuous(labels = scales::percent_format(accuracy = 1),expand = c(0, 0),
+                     breaks = c(-0.15, -0.1,-0.05, 0, 0.05,0.1,0.15)) +
+  coord_cartesian(xlim = c(-0.2, 0.20)) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given protocol by examining the proportion of posterior draws that met the criteria of interest (e.g., >0)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By protocol and time
+emmeans(LV_model, ~ protocol*time, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# Contrast for time
+pairs(emmeans(LV_model, ~protocol*time, weights = "prop"))%>%
+gather_emmeans_draws()%>%
+group_by(contrast)%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+```
+
+## Repetition Loss
+
+To assess differences in repetition loss between the FAIL and RIR protocols, a linear model will be generated witht the following response variable:
+
+  1) Repetition loss (first to final set) calculated as a percentage value
+  
+Two additional interaction factors will be added into the model:
+
+  1) Time point (Session, Week)
+  2) Exercise (Leg Press, Leg Extension)
+  
+This model will account for the number of repetitions performed on the first set (as this value could influence the percentage change), total number of sets performed, and participant sex, and will allow us to investigate an interaction effect, which is important, as repetition loss may change overtime and differ between exercises and sexes. Group level slope structure for each participant will involve 'protocol * time * exercise + reps.first + sets' and each limb will be nested within each participant.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of repetition loss (first to final set) for FAIL and RIR protocols.
+
+```{r}
+#| label: Bayesian linear modelling
+
+model.matrix(rep.loss ~ protocol * time * exercise + sex, data = rep_loss_master) # Assess model matrix
+
+# Generate model
+RL_model <- brm(rep.loss ~ protocol * time * exercise + sex + reps.first + sets + (protocol * time * exercise + reps.first + sets|id) + (time + exercise + reps.first|id:limb),
+            data=rep_loss_master,
+            seed=123,
+            control = list(adapt_delta=0.99))
+summary(RL_model)
+
+#plot(RL_model) # Preliminary diagnostics
+
+```
+
+Calculate Bayesian estimates (and contrast estimates) generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# Means for protocol, time and exercise
+## Time + Protocol + Exercise
+RL_effects <- emmeans(RL_model, ~time+protocol+exercise, at=list(time=1:16), weights = "prop")
+    hpd.summary(RL_effects, point.est = mean) 
+RL_effects_GG <- emmeans(RL_model, ~time+protocol+exercise, at=list(time=1:16), weights = "prop") %>% gather_emmeans_draws() # For ggplot
+
+## Protocol + Exercise
+RL_effects_protocol <- emmeans(RL_model, ~protocol+exercise, at=list(time=1:16), weights = "prop")
+  hpd.summary(RL_effects_protocol, point.est = mean)
+
+## Protocol + Time
+RL_effects_time <- emmeans(RL_model, ~protocol+time, at=list(time=1:16), weights = "prop")
+  hpd.summary(RL_effects_time, point.est = mean) 
+
+# Means and contrasts of slopes
+RL_trends=emtrends(RL_model,
+         var = "time",
+         pairwise~protocol|exercise)
+
+## Mean of slopes for each exercise
+hpd.summary(RL_trends$emtrends, point.est = mean)
+RL_trends_GG=RL_trends$emtrends%>%
+  gather_emmeans_draws() # For ggplot
+
+## Contrast of slopes for each exercise
+hpd.summary(RL_trends$contrasts, point.est = mean)
+RL_contrasts_GG=RL_trends$contrasts%>%
+  gather_emmeans_draws() # For ggplot
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot to display the predicted longitudinal means for each protocol across all sessions completed and for each exercise, along with the contrast of the slopes as a posterior distribution.
+
+1) Predicted longitudinal means
+
+```{r}
+#| label: Construct ggplot
+
+x1 = factor(RL_effects_GG$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(data = RL_effects_GG,
+                 aes(y=.value,
+                     x=time,
+                     color=protocol,
+                     fill=protocol))+
+  facet_grid(~factor(x1),scales = "free")+
+  geom_hline(aes(yintercept = 0),
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = 0.8) +
+  stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+        scale_color_manual(values = c("#E74C3C", "#3498DB")) +
+    scale_fill_manual(values = alpha(c("#E74C3C", "#3498DB"), 0.6)) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1),expand = c(0, 0),
+                     breaks = c(0,-0.1, -0.2,-0.3, -0.4)) +
+    coord_cartesian(ylim = c(-0.42, 0.02)) +
+    theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6),
+      panel.spacing = unit(.4, "cm"))
+
+```
+
+2) Contrast of slopes
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(RL_contrasts_GG, aes(x = .value, y = factor(exercise, level=c('Leg Extension', 'Leg Press')), fill = stat(x < 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) + scale_x_continuous(labels = scales::percent_format(accuracy = 1),expand = c(0, 0),
+                         breaks = c(-0.01, 0, 0.01, 0.02)) +
+  coord_cartesian(xlim = c(-0.015, 0.022)) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given protocol by examining the proportion of posterior draws that met the criteria of interest (e.g., >0)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By protocol and exercise
+emmeans(RL_model, ~ protocol*exercise, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (slopes for leg press <0)
+emtrends(RL_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (slopes for leg extension >0)
+emtrends(RL_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+```
+
+## Volume Load
+
+To assess differences in volume load between the FAIL and RIR protocols, a linear model will be generated with the following response variable:
+
+  1) Absolute volume load
+  
+Two additional interaction factors will be added into the model:
+
+  1) Time point (Session, Week)
+  2) Exercise (Leg Press, Leg Extension)
+
+This model will account for total number of sets performed and participant sex, and will allow us to investigate an interaction effect, which is important, as volume load may change overtime and differ between exercises and sexes. Group level slope structure for each participant will involve 'protocol * time * exercise + sets' and each limb will be nested within each participant.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of the volume load completed for FAIL and RIR protocols.
+
+```{r}
+#| label: Bayesian linear modelling
+
+model.matrix(volume.load ~ protocol * time * exercise + sex, data = volume_master) # Assess model matrix
+
+# Generate model
+VL_model <- brm(volume.load ~ protocol * time * exercise + sex + sets + (protocol * time * exercise + sets|id) + (1|id:limb),
+                data = volume_master,
+                seed = 123,
+                control = list(adapt_delta=0.99, max_treedepth = 12))
+summary(VL_model)
+
+#plot(VL_model) # Preliminary diagnostics
+
+```
+
+Calculate Bayesian estimates (and contrast estimates) generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# Means for protocol, time and exercise
+## Time + Protocol + Exercise
+VL_effects <- emmeans(VL_model, ~time+protocol+exercise, at=list(time=1:16), weights = "prop")
+  hpd.summary(VL_effects, point.est = mean)
+VL_effects_GG <- emmeans(VL_model, ~time+protocol+exercise, at=list(time=1:16), weights = "prop") %>% gather_emmeans_draws() # For ggplot
+
+## Protocol + Exercise
+VL_effects_protocol <- emmeans(VL_model, ~protocol+exercise, at=list(time=1:16), weights = "prop")
+  hpd.summary(VL_effects_protocol, point.est = mean)
+
+## Protocol + Time
+VL_effects_time <- emmeans(VL_model, ~protocol+time, at=list(time=1:16), weights = "prop")
+  hpd.summary(VL_effects_time, point.est = mean) 
+
+# Means and contrasts of slopes
+VL_trends=emtrends(VL_model,
+         var = "time",
+         pairwise~protocol|exercise)
+
+## Mean of slopes for each exercise
+hpd.summary(VL_trends$emtrends, point.est = mean)
+VL_trends_GG=VL_trends$emtrends%>%
+  gather_emmeans_draws() # For ggplot
+
+## Contrast of slopes for each exercise
+hpd.summary(VL_trends$contrasts, point.est = mean)
+VL_contrasts_GG=VL_trends$contrasts%>%
+  gather_emmeans_draws() # For ggplot
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot to display the predicted longitudinal means for each protocol across all sessions completed and for each exercise, along with the contrast of the slopes as a posterior distribution.
+
+1) Predicted longitudinal means
+
+```{r}
+#| label: Construct ggplot
+
+x1 = factor(VL_effects_GG$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(data = VL_effects_GG,
+                 aes(y=.value,
+                     x=time,
+                     fill=protocol,
+                     color=protocol))+
+  facet_grid(~factor(x1),scales = "free")+
+  geom_hline(aes(yintercept = 0),
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = 0.8) +
+  stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+        scale_color_manual(values = c("#E74C3C", "#3498DB")) +
+    scale_fill_manual(values = alpha(c("#E74C3C", "#3498DB"), 0.6)) +
+    theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+     strip.background = element_rect(
+      color = "white",
+      fill = "white",
+      linetype = "solid"
+    ),
+       strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6),
+      panel.spacing = unit(.4, "cm"))
+
+```
+
+2) Contrast of slopes
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(VL_contrasts_GG, aes(x = .value, y = factor(exercise, level=c('Leg Extension', 'Leg Press')), fill = stat(x < 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given protocol by examining the proportion of posterior draws that met the criteria of interest (e.g., >0)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By protocol and exercise
+emmeans(VL_model, ~ protocol*exercise, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (slopes)
+emtrends(VL_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (contrast for slopes <0)
+emtrends(VL_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+```
+
+## Repetition Volume
+
+To assess differences in repetition volume between the FAIL and RIR protocols, a linear model will be generated with the following response variable:
+
+  1) Absolute repetition volume
+  
+Two additional interaction factors will be added into the model:
+
+  1) Time point (Session, Week)
+  2) Exercise (Leg Press, Leg Extension)
+  
+This model will account for total number of sets performed and participant sex, and will allow us to investigate an interaction effect, which is important, as repetition volume may change overtime and differ between exercises and sexes. Group level slope structure for each participant will involve 'protocol * time * exercise + sets' and each limb will be nested within each participant.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of the volume load completed for FAIL and RIR protocols.
+
+```{r}
+#| label: Bayesian linear modelling
+
+model.matrix(repetitions ~ protocol * time * exercise + sex, data = volume_master) # Assess model matrix
+
+# Generate model
+RV_model <- brm(repetitions ~ protocol * time * exercise + sex + sets + (protocol * time * exercise + sets|id) + (time + exercise|id:limb),
+                data = volume_master,
+                seed = 123,
+                control = list(adapt_delta=0.99))
+summary(RV_model)
+
+#plot(RV_model) # Preliminary diagnostics
+
+```
+
+Calculate Bayesian estimates (and contrast estimates) generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# Means for protocol, time and exercise
+## Time + Protocol + Exercise
+RV_effects <- emmeans(RV_model, ~time+protocol+exercise, at=list(time=1:16), weights = "prop")
+  hpd.summary(RV_effects, point.est = mean)
+RV_effects_GG <- emmeans(RV_model, ~time+protocol+exercise, at=list(time=1:16), weights = "prop") %>% gather_emmeans_draws() # For ggplot
+
+## Protocol + Exercise
+RV_effects_protocol <- emmeans(RV_model, ~protocol+exercise, at=list(time=1:16), weights = "prop")
+  hpd.summary(RV_effects_protocol, point.est = mean)
+
+## Protocol + Time
+RV_effects_time <- emmeans(RV_model, ~protocol+time, at=list(time=1:16), weights = "prop")
+  hpd.summary(RV_effects_time, point.est = mean) 
+
+# Means and contrasts of slopes
+RV_trends=emtrends(RV_model,
+         var = "time",
+         pairwise~protocol|exercise)
+
+## Mean of slopes for each exercise
+hpd.summary(RV_trends$emtrends, point.est = mean)
+RV_trends_GG=RV_trends$emtrends%>%
+  gather_emmeans_draws() # For ggplot
+
+## Contrast of slopes for each exercise
+hpd.summary(RV_trends$contrasts, point.est = mean)
+RV_contrasts_GG=RV_trends$contrasts%>%
+  gather_emmeans_draws() # For ggplot
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot to display the predicted longitudinal means for each protocol across all sessions completed and for each exercise, along with the contrast of the slopes as a posterior distribution.
+
+1) Predicted longitudinal means
+
+```{r}
+#| label: Construct ggplot
+
+x1 = factor(RV_effects_GG$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(data = RV_effects_GG,
+                 aes(y=.value,
+                     x=time,
+                     fill=protocol,
+                     color=protocol))+
+  facet_grid(~factor(x1),scales = "free")+
+  geom_hline(aes(yintercept = 0),
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = 0.8) +
+  stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+        scale_color_manual(values = c("#E74C3C", "#3498DB")) +
+    scale_fill_manual(values = alpha(c("#E74C3C", "#3498DB"), 0.6)) +
+      scale_y_continuous(expand = c(0, 0),
+                     breaks = c(20,25,30,35)) +
+    coord_cartesian(ylim = c(18, 37)) +
+    theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+        strip.background = element_rect(
+      color = "white",
+      fill = "white",
+      linetype = "solid"
+    ),
+       strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6),
+    panel.spacing = unit(.4, "cm"))
+
+```
+
+2) Contrast of slopes
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(RV_contrasts_GG, aes(x = .value, y = factor(exercise, level=c('Leg Extension', 'Leg Press')), fill = stat(x < 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) + scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.4, -0.2, 0, 0.2, 0.4)) +
+    coord_cartesian(xlim = c(-0.45, 0.45)) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given protocol by examining the proportion of posterior draws that met the criteria of interest (e.g., >0)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By protocol and exercise
+emmeans(RV_model, ~ protocol*exercise, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (slopes for leg press <0)
+emtrends(RV_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (slopes for leg extension >0)
+emtrends(RV_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+```
+
+-----------------------------------------------------------------------------------------------------------------------
+
+DATA ANALYSIS COMPLETE -> Move on to Diagnostics

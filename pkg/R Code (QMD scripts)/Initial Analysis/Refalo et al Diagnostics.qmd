@@ -1,0 +1,1611 @@
+---
+title: Bayesian Modeling for Original Research Study Investigating the Influence of PTF on Quadriceps Hypertrophy
+author: Martin Refalo
+output: html
+editor_options: 
+  chunk_output_type: console
+---
+
+# Model diagnostics
+
+To enhance the accuracy, transparency, and replicability of our Bayesian analysis, we used the WAMBS-Checklist to audit and diagnose our models. We will also calculate the residuals for each model and conduct other necessary diagnostics.
+
+## Muscle hypertrophy
+
+Before commencing with the model diagnostics, we will conduct a sensitivity analysis to ensure that the removal of one participant from the data set (due to not adhering to the nutritional requirements of the RT intervention) does not meaningfully affect the results.
+
+```{r}
+#| label: Bayesian linear modelling
+
+rf_vl_master_sens <- read_xlsx("Muscle_Thickness/Sensitivity Analysis/rf_vl_master_sens.xlsx")%>%
+  mutate_at(c("id","limb","protocol","muscle","sex"),factor)
+rf_vl_master_sens=rf_vl_master_sens%>%
+  group_by(muscle)%>%
+  center(Pre)
+
+# Generate model
+MT_model_sens <- brm(muscle.thickness ~ protocol*muscle + Pre + (protocol|id) + (1|id:limb),
+                data = rf_vl_master_sens,
+                seed = 123,
+                control = list(adapt_delta=0.99))
+summary(MT_model_sens)
+
+```
+
+Calculate Bayesian estimates generated from the linear model for our sensitivity analysis.
+
+```{r}
+#| label: Bayesian estimstes from linear model
+                
+MT_effects_sens <- emmeans(MT_model_sens, ~ protocol, weights = "prop")
+  hpd.summary(MT_effects_sens, point.est = mean) # Display mean
+  
+MT_effects_contrast_sens <- pairs(emmeans(MT_model_sens, ~ protocol, weights = "prop"))
+  hpd.summary(MT_effects_contrast_sens, point.est = mean) # Display mean
+  
+```
+
+Results are similar between models, the sensitivity analysis model is slightly more in favour of RIR versus FAIL.
+
+We will now move onto the diagnostics. One of our assumptions for the model was that the residuals were normally distributed around zero. We can extract the residuals from the model and plot them to examine this assumption.
+
+```{r}
+#| label: Calculate residuals
+
+resid = resid(MT_model)[, "Estimate"]
+fit = fitted(MT_model)[, "Estimate"]
+ggplot() + geom_point(data = NULL, aes(y = resid, x = fit))
+
+ggplot(dat) + geom_point(aes(y = resid, x = protocol)) # By protocol
+
+```
+
+These plots suggest that the assumption of normally distributed residuals around zero is met.
+
+We will now construct trace plots, histograms, kernel density plots, and autocorrelation plots for parameters of interest. These plots will be presented in the supplementary file.
+
+```{r}
+#| label: Diagnostics for muscle hypertrophy
+
+# Trace plot for FAIL
+mcmc_trace(MT_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for RIR
+mcmc_trace(MT_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for sigma
+mcmc_trace(MT_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Histogram for FAIL
+mcmc_hist(MT_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for RIR
+mcmc_hist(MT_model, pars = c("b_protocolRIR")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for sigma
+mcmc_hist(MT_model, pars = c("sigma")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for FAIL
+mcmc_dens(MT_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for RIR
+mcmc_dens(MT_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for sigma
+mcmc_dens(MT_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for FAIL
+bayesplot::mcmc_acf(MT_model, pars = c("b_Intercept")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for RIR
+bayesplot::mcmc_acf(MT_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for sigma
+bayesplot::mcmc_acf(MT_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+To meet the criteria of the WAMBS checklist, we will also re-run the model with double the iterations and report results of convergence in the supplementary file.
+
+```{r}
+#| label: Muscle hypertrophy diagnostics with double the iterations
+
+# Re-run model with 16,000 iterations
+MT_model_double_iter <- brm(muscle.thickness ~ protocol*muscle + Pre + (protocol|id) + (1|id:limb),
+                data = rf_vl_master,
+                seed = 123,
+                iter = 16000,
+                control = list(adapt_delta=0.99))
+summary(MT_model_double_iter)
+
+# Trace plot for FAIL with 16,000 iterations
+mcmc_trace(MT_model_double_iter, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for RIR with 16,000 iterations
+mcmc_trace(MT_model_double_iter, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for sigma with 16,000 iterations
+mcmc_trace(MT_model_double_iter, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+## Loss of lifting velocity
+
+Extract residuals from the model.
+
+```{r}
+#| label: Calculate residuals
+
+vl_master_cases <- vl_master[complete.cases(vl_master),] 
+
+resid = resid(LV_model)[, "Estimate"]
+fit = fitted(LV_model)[, "Estimate"]
+ggplot() + geom_point(data = NULL, aes(y = resid, x = fit))
+
+ggplot(dat) + geom_point(aes(y = resid, x = protocol)) # By protocol
+
+ggplot(dat) + geom_point(aes(y = resid, x = time)) # By Time
+
+```
+
+These plots suggest that the assumption of normally distributed residuals around zero is met.
+
+Construct trace plots, histograms, kernel density plots, and autocorrelation plots for parameters of interest. These plots will be presented in the supplementary file.
+
+```{r}
+#| label: Diagnostics for lifting velocity
+
+# Trace plot for FAIL
+mcmc_trace(LV_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for RIR
+mcmc_trace(LV_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for sigma
+mcmc_trace(LV_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Histogram for FAIL
+mcmc_hist(LV_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for RIR
+mcmc_hist(LV_model, pars = c("b_protocolRIR")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for sigma
+mcmc_hist(LV_model, pars = c("sigma")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for FAIL
+mcmc_dens(LV_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for RIR
+mcmc_dens(LV_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for sigma
+mcmc_dens(LV_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for FAIL
+bayesplot::mcmc_acf(LV_model, pars = c("b_Intercept")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for RIR
+bayesplot::mcmc_acf(LV_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for sigma
+bayesplot::mcmc_acf(LV_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+Re-run the model with double the iterations and report results of convergence in the supplementary file.
+
+```{r}
+#| label: Lifting velocity diagnostics with double the iterations
+
+# Re-run model with 16,000 iterations
+LV_model_double_iter <- brm(percent_diff ~ protocol * time + sex + first_set + sets + (protocol * time + sex + first_set + sets|id) + (protocol*time|id:limb),
+                data = vl_master,
+                seed = 123,
+                iter = 16000,
+                control = list(adapt_delta=0.99))
+summary(LV_model_double_iter)
+
+# Trace plot for FAIL with 16,000 iterations
+mcmc_trace(LV_model_double_iter, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for RIR with 16,000 iterations
+mcmc_trace(LV_model_double_iter, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for sigma with 16,000 iterations
+mcmc_trace(LV_model_double_iter, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+## Repetition Loss
+
+Extract residuals from the model.
+
+```{r}
+#| label: Calculate residuals
+
+rep_loss_master_cases <- rep_loss_master[complete.cases(rep_loss_master),] 
+
+resid = resid(RL_model)[, "Estimate"]
+fit = fitted(RL_model)[, "Estimate"]
+ggplot() + geom_point(data = NULL, aes(y = resid, x = fit))
+
+ggplot(dat) + geom_point(aes(y = resid, x = protocol)) # By protocol
+
+ggplot(dat) + geom_point(aes(y = resid, x = time))# By time
+
+```
+
+These plots suggest that the assumption of normally distributed residuals around zero is met.
+
+Construct trace plots, histograms, kernel density plots, and autocorrelation plots for parameters of interest. These plots will be presented in the supplementary file.
+
+```{r}
+#| label: Diagnostics for repetition loss
+
+# Trace plot for FAIL
+mcmc_trace(RL_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for RIR
+mcmc_trace(RL_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for sigma
+mcmc_trace(RL_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Histogram for FAIL
+mcmc_hist(RL_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for RIR
+mcmc_hist(RL_model, pars = c("b_protocolRIR")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for sigma
+mcmc_hist(RL_model, pars = c("sigma")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for FAIL
+mcmc_dens(RL_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for RIR
+mcmc_dens(RL_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for sigma
+mcmc_dens(RL_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for FAIL
+bayesplot::mcmc_acf(RL_model, pars = c("b_Intercept")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for RIR
+bayesplot::mcmc_acf(RL_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for sigma
+bayesplot::mcmc_acf(RL_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+Re-run the model with double the iterations and report results of convergence in the supplementary file.
+
+```{r}
+#| label: Repetition loss diagnostics with double the iterations
+
+# Re-run model with 16,000 iterations
+RL_model_double_iter <- brm(rep.loss ~ protocol * time * exercise + sex + reps.first + sets + (protocol * time * exercise + sex + reps.first + sets|id) + (protocol * time * exercise + reps.first + sets|id:limb),
+            data=rep_loss_master,
+            seed=123,
+            iter = 16000,
+            control = list(adapt_delta=0.99))
+summary(RL_model_double_iter)
+
+# Trace plot for FAIL with 16,000 iterations
+mcmc_trace(RL_model_double_iter, pars = c("b_protocolFAIL")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for RIR with 16,000 iterations
+mcmc_trace(RL_model_double_iter, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for sigma with 16,000 iterations
+mcmc_trace(RL_model_double_iter, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+## Volume Load
+
+Extract residuals from the model.
+
+```{r}
+#| label: Calculate residuals
+
+volume_master_cases <- volume_master[complete.cases(volume_master),] 
+
+resid = resid(VL_model)[, "Estimate"]
+fit = fitted(VL_model)[, "Estimate"]
+ggplot() + geom_point(data = NULL, aes(y = resid, x = fit))
+
+ggplot(dat) + geom_point(aes(y = resid, x = protocol)) # By protocol
+
+ggplot(dat) + geom_point(aes(y = resid, x = time)) # By time
+
+```
+
+These plots suggest that the assumption of normally distributed residuals around zero is met.
+
+Construct trace plots, histograms, kernel density plots, and autocorrelation plots for parameters of interest. These plots will be presented in the supplementary file.
+
+```{r}
+#| label: Diagnostics for volume load
+
+# Trace plot for FAIL
+mcmc_trace(VL_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for RIR
+mcmc_trace(VL_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for sigma
+mcmc_trace(VL_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Histogram for FAIL
+mcmc_hist(VL_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for RIR
+mcmc_hist(VL_model, pars = c("b_protocolRIR")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for sigma
+mcmc_hist(VL_model, pars = c("sigma")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for FAIL
+mcmc_dens(VL_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for RIR
+mcmc_dens(VL_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for sigma
+mcmc_dens(VL_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for FAIL
+bayesplot::mcmc_acf(VL_model, pars = c("b_Intercept")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for RIR
+bayesplot::mcmc_acf(VL_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for sigma
+bayesplot::mcmc_acf(VL_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+Re-run the model with double the iterations and report results of convergence in the supplementary file.
+
+```{r}
+#| label: Volume load diagnostics with double the iterations
+
+# Re-run model with 16,000 iterations
+VL_model_double_iter <- brm(volume.load ~ protocol * time * exercise + sex + sets + (protocol * time * exercise + sets|id) + (protocol * time|id:limb),
+                data = volume_master,
+                seed = 123,
+                iter = 16000,
+                control = list(adapt_delta=0.99, max_treedepth = 12))
+summary(VL_model_double_iter)
+
+volume.load ~ protocol * time * exercise + sex + sets + (protocol * time * exercise + sets|id) + (1|id:limb)
+
+# Trace plot for FAIL with 16,000 iterations
+mcmc_trace(VL_model_double_iter, pars = c("b_protocolFAIL")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for RIR with 16,000 iterations
+mcmc_trace(VL_model_double_iter, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for sigma with 16,000 iterations
+mcmc_trace(VL_model_double_iter, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+## Repetition Volume
+
+Extract residuals from the model.
+
+```{r}
+#| label: Calculate residuals
+
+resid = resid(RV_model)[, "Estimate"]
+fit = fitted(RV_model)[, "Estimate"]
+ggplot() + geom_point(data = NULL, aes(y = resid, x = fit))
+
+ggplot(dat) + geom_point(aes(y = resid, x = protocol)) # By protocol
+
+ggplot(dat) + geom_point(aes(y = resid, x = time)) # By time
+
+```
+
+These plots suggest that the assumption of normally distributed residuals around zero is met.
+
+Construct trace plots, histograms, kernel density plots, and autocorrelation plots for parameters of interest. These plots will be presented in the supplementary file.
+
+```{r}
+#| label: Diagnostics for repetition volume
+
+# Trace plot for FAIL
+mcmc_trace(RV_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for RIR
+mcmc_trace(RV_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Trace plot for sigma
+mcmc_trace(RV_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  ) 
+
+# Histogram for FAIL
+mcmc_hist(RV_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for RIR
+mcmc_hist(RV_model, pars = c("b_protocolRIR")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Histogram for sigma
+mcmc_hist(RV_model, pars = c("sigma")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for FAIL
+mcmc_dens(RV_model, pars = c("b_Intercept")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for RIR
+mcmc_dens(RV_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Kernel density for sigma
+mcmc_dens(RV_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for FAIL
+bayesplot::mcmc_acf(RV_model, pars = c("b_Intercept")) +
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for RIR
+bayesplot::mcmc_acf(RV_model, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Autocorrelation for sigma
+bayesplot::mcmc_acf(RV_model, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+Re-run the model with double the iterations and report results of convergence in the supplementary file.
+
+```{r}
+#| label: Repetition volume diagnostics with double the iterations
+
+# Re-run model with 16,000 iterations
+RV_model_double_iter <- brm(repetitions ~ protocol * time * exercise + sex + sets + (protocol * time * exercise + sets|id) + (protocol + time + exercise|id:limb),
+                data = volume_master,
+                seed = 123,
+                iter = 16000,
+                control = list(adapt_delta=0.99))
+summary(RV_model_double_iter)
+
+# Trace plot for FAIL with 16,000 iterations
+mcmc_trace(RV_model_double_iter, pars = c("b_protocolFAIL")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for RIR with 16,000 iterations
+mcmc_trace(RV_model_double_iter, pars = c("b_protocolRIR")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+# Trace plot for sigma with 16,000 iterations
+mcmc_trace(RV_model_double_iter, pars = c("sigma")) + 
+  ggplot2::theme(
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = 1),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.line = element_line(
+      size = 1,
+      colour = "black",
+      linetype = 1
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+-----------------------------------------------------------------------------------------------------------------------
+
+DIAGNOSTICS COMPLETE

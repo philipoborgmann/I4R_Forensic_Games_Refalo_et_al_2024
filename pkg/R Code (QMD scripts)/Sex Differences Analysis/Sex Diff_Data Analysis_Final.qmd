@@ -1,0 +1,1364 @@
+---
+title: Bayesian Modeling for Original Research Study Investigating Sex Differences in Muscle Hypertrophy and Neuromuscular Fatigue
+author: Martin Refalo
+output: html
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+
+We will generate linear models using the `brms` package. Posterior draws will be extracted using `tidybayes` and the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given sex will be calculated manually by examining the proportion of posterior draws that meets the criteria of interest (e.g., >0 or >TE)  For normally distributed data, Bayesian linear models will be generated to assess mean differences between protocols.
+
+## Load libraries
+
+First we load the libraries we need and set up our working environment.
+
+```{r}
+#| label: Set up environment
+
+library(tidyverse) # Data wrangling, plotting
+library(brms) # Bayesian estimation
+library(tidybayes) # 'Tidy' results
+library(bayesplot) # Convenient plotting
+library(ggridges) # For forest plot
+library(readxl) # To read data files
+library(rstan) # Bayesian modelling
+library(ggplot2) # For plots
+library(posterior)# Posterior distributions
+library(glue) # For plots
+library(ggpubr) # For Plots
+library (bayestestR) # For probability of direction
+library(emmeans) # For contrasts
+library(rstatix) # Assess normality
+library(gt) # Tables
+library(dplyr) # Data frames
+library(ggh4x) # For plots
+library(datawizard) # Data wrangling
+library(patchwork) # For plots
+library(lme4) # Traditional modelling
+library(performance) # Model quality
+
+```
+
+## Muscle hypertrophy
+
+To assess differences in muscle hypertrophy between sexes, a linear model will be generated with the following response variable: 
+
+  1) Change in Quadriceps Thickness (from pre- to post-intervention)
+  
+Two additional interaction factors will be added into the model:
+
+  1) Time (PRE or POST)
+  2) Protocol (FAIL or RIR)
+
+This model will account for the muscle measured and the number of sets performed and will allow us to investigate an interaction effect with protocol, which is important, especially considering our participants completed two different protocols. Time is also allocated as an interaction factor as we took two ultrasound scans at each time point (0=PRE and 1=POST).
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of the change in muscle thickness (from pre- to post-intervention) for each sex and the complete posterior distributions.
+
+```{r}
+#| label: Bayesian linear modelling
+
+# Generate model for change in quadriceps thickness
+MT_model <- brm(muscle.thickness ~ sex * time * protocol + muscle + sets + (time * protocol|id) + (1|id:limb),
+                data = mt_data,
+                seed = 123,
+                prior = mt.priors,
+                control = list(adapt_delta=0.99, max_treedepth = 12))
+summary(MT_model)
+
+#plot(MT_model) # Preliminary diagnostics
+
+# Sensitivity Analysis (With Non-Informative Prior)
+MT_model_Sens <- brm(muscle.thickness ~ sex * time * protocol + muscle + sets + (time * protocol|id) + (1|id:limb),
+                data = mt_data,
+                seed = 123,
+                control = list(adapt_delta=0.99))
+
+```
+
+Calculate Bayesian estimates generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# By SEX Only
+MT_effects=emmeans(MT_model,~time+sex)
+
+MT_draws=MT_effects %>% gather_emmeans_draws(value = "emmean")
+
+MT_estimates=MT_draws %>% mean_hdci()
+
+## Establish denominators
+MT_F_pre=MT_effects %>% as.data.frame()%>%filter(sex=="Female",time==0)%>%.$emmean
+MT_M_pre=MT_effects %>% as.data.frame()%>%filter(sex=="Male",time==0)%>%.$emmean
+
+## Extract absolute within condition contrasts
+MT_effects_within = MT_effects %>% contrast("revpairwise",by="sex")
+MT_effects_within %>% gather_emmeans_draws(value = "emmean")
+
+MT_draws_within=MT_effects_within %>% gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+MT_draws_within=MT_draws_within %>% mutate(rel.emmean=ifelse(sex=="Female",(emmean/MT_F_pre)*100,(emmean/MT_M_pre)*100))
+
+MT_estimates_abs_within=MT_draws_within %>% mean_hdci(emmean)
+
+MT_estimates_rel_within=MT_draws_within %>% mean_hdci(rel.emmean)
+
+## Add relative between condition contrasts
+MT_draws_between=MT_draws_within %>% pivot_wider(id_cols = ".draw", names_from = "sex", values_from = c("emmean","rel.emmean"))%>%
+  mutate(emmean=emmean_Male-emmean_Female, rel.emmean=rel.emmean_Male-rel.emmean_Female)
+
+MT_draws_abs_between=MT_draws_between %>% mean_hdci(emmean)
+
+MT_draws_rel_between=MT_draws_between %>% mean_hdci(rel.emmean)
+
+# By SEX and PROTOCOL
+MT_effects_P=emmeans(MT_model,~time+sex+protocol)
+
+MT_draws_P=MT_effects_P %>% gather_emmeans_draws(value = "emmean")
+
+MT_estimates_P=MT_draws_P %>% mean_hdci()
+
+## Establish denominators
+MT_F_pre_FAIL=MT_effects_P %>% as.data.frame()%>%filter(sex=="Female",time==0,protocol=="FAIL")%>%.$emmean
+MT_M_pre_RIR=MT_effects_P %>% as.data.frame()%>%filter(sex=="Male",time==0,protocol=="RIR")%>%.$emmean
+MT_F_pre_RIR=MT_effects_P %>% as.data.frame()%>%filter(sex=="Female",time==0,protocol=="RIR")%>%.$emmean
+MT_M_pre_FAIL=MT_effects_P %>% as.data.frame()%>%filter(sex=="Male",time==0,protocol=="FAIL")%>%.$emmean
+
+## Extract absolute within condition contrasts
+MT_effects_within_P = MT_effects_P %>% contrast("revpairwise",by=c("sex","protocol"))
+
+MT_draws_within_P=MT_effects_within_P %>% gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+MT_draws_within_P=MT_draws_within_P %>% mutate(rel.emmean=ifelse(
+  sex=="Female"&protocol=="FAIL",(emmean/MT_F_pre_FAIL)*100,
+  ifelse(sex=="Female"&protocol=="RIR",(emmean/MT_F_pre_RIR)*100,
+         ifelse(sex=="Male"&protocol=="FAIL",(emmean/MT_M_pre_FAIL)*100,
+                (emmean/MT_F_pre_RIR)*100))))
+
+MT_estimates_abs_within_P=MT_draws_within_P %>% mean_hdci(emmean)
+
+MT_estimates_rel_within_P=MT_draws_within_P %>% mean_hdci(rel.emmean)
+
+## Add relative between condition contrasts
+MT_draws_between_P=MT_draws_within_P %>% pivot_wider(id_cols = ".draw", names_from = c("sex","protocol"), values_from = c("emmean","rel.emmean"))%>%
+  mutate(emmean_FAIL=emmean_Male_FAIL-emmean_Female_FAIL,emmean_RIR=emmean_Male_RIR-emmean_Female_RIR, rel.emmean_FAIL=rel.emmean_Male_FAIL-rel.emmean_Female_FAIL,rel.emmean_RIR=rel.emmean_Male_RIR-rel.emmean_Female_RIR)
+
+MT_draws_abs_between_FAIL=MT_draws_between_P %>% mean_hdci(emmean_FAIL)
+MT_draws_abs_between_RIR=MT_draws_between_P %>% mean_hdci(emmean_RIR)
+MT_draws_rel_between_FAIL=MT_draws_between_P %>% mean_hdci(rel.emmean_FAIL)
+MT_draws_rel_between_RIR=MT_draws_between_P %>% mean_hdci(rel.emmean_RIR)
+
+# SENSITIVITY ANALYSIS
+MT_F_pre_Sens=MT_effects_Sens %>% as.data.frame()%>%filter(sex=="Female",time==0)%>%.$emmean
+MT_M_pre_Sens=MT_effects_Sens %>% as.data.frame()%>%filter(sex=="Male",time==0)%>%.$emmean
+MT_effects_Sens=emmeans(MT_model_Sens,~time+sex)
+MT_draws_Sens=MT_effects %>% gather_emmeans_draws(value = "emmean")
+MT_estimates_Sens=MT_draws_Sens %>% mean_hdci()
+MT_effects_within_Sens = MT_effects_Sens %>% contrast("revpairwise",by="sex")
+MT_effects_within_Sens %>% gather_emmeans_draws(value = "emmean")
+MT_draws_within_Sens=MT_effects_within_Sens %>% gather_emmeans_draws(value = "emmean")
+MT_draws_within_Sens=MT_draws_within_Sens %>% mutate(rel.emmean=ifelse(sex=="Female",(emmean/MT_F_pre_Sens)*100,(emmean/MT_M_pre_Sens)*100))
+MT_estimates_abs_within_Sens=MT_draws_within_Sens %>% mean_hdci(emmean)
+MT_estimates_rel_within_Sens=MT_draws_within_Sens %>% mean_hdci(rel.emmean)
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot of the posterior distributions for each sex, along with the contrast.
+
+1) By SEX
+
+```{r}
+#| label: Construct ggplot
+
+# ABSOLUTE
+ggplot(MT_draws_within, aes(x = emmean, y = sex, fill = sex)) + 
+   geom_rect(aes(xmin=te_avg,xmax=0.565,ymin=stage("Male", after_scale = ymin-1.38),ymax=stage("Male", after_scale = ymin+1.08)),
+                    fill="#F5F5F5") +
+    geom_vline(
+    xintercept = 0 + te_avg,
+    colour = 'grey',
+    linetype = 'dashed',
+    linewidth = .8) + 
+  geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = .8) +
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5)) +
+  coord_cartesian(xlim = c(-0.17, 0.57), ylim = c(1.2,2.5)) +
+  theme(
+       axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+# RELATIVE
+ggplot(MT_draws_within, aes(x = rel.emmean, y = sex, fill = sex)) +
+  geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = .8) +
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-5, 0, 5, 10, 15, 20)) +
+  coord_cartesian(xlim = c(-7, 22), ylim = c(1.2,2.5)) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+        axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+    
+```
+
+2) Contrast for SEX
+
+```{r}
+#| label: Construct ggplot
+
+# ABSOLUTE
+ggplot(data = MT_draws_between,
+       aes(x=emmean, fill = after_stat(x > 0))) +
+ stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+    stat_pointinterval(point_interval = "mean_hdci",.width = .95) +
+   geom_rect(aes(xmin=-te_avg,xmax=-0.214,ymin=stage("Female - Male", after_scale = ymin-1.47), ymax=stage("Female - Male", after_scale = ymax+0.57)),
+                    fill="#F5F5F5") +
+    geom_rect(aes(xmin=te_avg,xmax=0.433,ymin=stage("Female - Male", after_scale = ymin-1.47), ymax=stage("Female - Male", after_scale = ymax+0.57)),
+                    fill="#F5F5F5") +
+    geom_vline(aes(xintercept = te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+      geom_vline(aes(xintercept = -te_avg),
+             colour = 'grey',
+             linetype = 'dashed',
+             linewidth = .8) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+      geom_vline(
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8)+
+  coord_cartesian(xlim = c(-0.22, 0.44)) +
+  scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-0.2, -0.1, 0, 0.10, 0.20, 0.3, 0.4)) +
+  theme(
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+# RELATIVE
+ggplot(data = MT_draws_between,
+       aes(x=rel.emmean, fill = after_stat(x > 0))) +
+   geom_rect(aes(xmin=-te_avg,xmax=-0.317,ymin=stage("Female - Male", after_scale = ymin-1.48), ymax=stage("Female - Male", after_scale = ymax+0.58)),
+                    fill="white") +
+    geom_rect(aes(xmin=te_avg,xmax=0.336,ymin=stage("Female - Male", after_scale = ymin-1.48), ymax=stage("Female - Male", after_scale = ymax+0.58)),
+                    fill="white") +
+    stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+    stat_pointinterval(point_interval = "mean_hdci",.width = .95) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+      geom_vline(
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8)+
+  theme(
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+3) By SEX (PRE to POST ABSOLUTE changes)
+
+```{r}
+#| label: Construct ggplot
+
+PrePost <- c("Pre", "Post")
+
+ggplot(data = MT_draws,
+       aes(x=time,
+           y=emmean,
+           color=sex,
+           fill=sex))+
+stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+           stat_summary(fun = 'mean', geom = 'point', size = 5) +
+          scale_color_manual(values = c("#F8766D", "#00BFC4")) +
+    scale_fill_manual(values = alpha(c("#F8766D", "#00BFC4"), 0.25)) +
+  scale_x_continuous(expand = c(0, 0),
+                     breaks = c(0, 1),
+                     labels = PrePost) +
+  coord_cartesian(xlim = c(-0.1, 1.1)) +
+   scale_y_continuous(expand = c(0.2, 0.05),
+                     breaks = c(1.6,1.8,2,2.2,2.4,2.6,2.8,3,3.2, 3.4)) +
+  theme(strip.background = element_rect(
+      color = "white",
+      fill = "white",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 12,
+      color = "white",
+      face = "bold"
+    ),
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"), 
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),panel.spacing = unit(.4, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+4) By SEX and PROTOCOL
+
+```{r}
+#| label: Construct ggplot
+
+# RELATIVE
+ggplot(MT_draws_within_P, aes(x = rel.emmean, y = sex, fill = sex)) +
+        facet_grid(~protocol,scales = "free") +
+  geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = .8) +
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + scale_x_continuous(expand = c(0, 0),
+                     breaks = c(-10,-5, 0, 5, 10, 15, 20,25)) +
+  coord_cartesian(xlim = c(-12, 27), ylim = c(1.2,2.5)) +
+   theme(
+     strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6
+    ), panel.spacing = unit(1.5, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+    
+```
+
+5) Contrast by SEX and PROTOCOL
+
+```{r}
+#| label: Construct ggplot
+
+# RELATIVE for FAIL
+ggplot(data = MT_draws_between_P,
+       aes(x=rel.emmean_FAIL, fill = after_stat(x > 0))) +
+   geom_rect(aes(xmin=-te_avg,xmax=-0.317,ymin=stage("Female - Male", after_scale = ymin-1.48), ymax=stage("Female - Male", after_scale = ymax+0.58)),
+                    fill="white") +
+    geom_rect(aes(xmin=te_avg,xmax=0.336,ymin=stage("Female - Male", after_scale = ymin-1.48), ymax=stage("Female - Male", after_scale = ymax+0.58)),
+                    fill="white") +
+    stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+    stat_pointinterval(point_interval = "mean_hdci",.width = .95) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+      geom_vline(
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8)+
+  theme(
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+# RELATIVE for RIR
+ggplot(data = MT_draws_between_P,
+       aes(x=rel.emmean_RIR, fill = after_stat(x > 0))) +
+   geom_rect(aes(xmin=-te_avg,xmax=-0.317,ymin=stage("Female - Male", after_scale = ymin-1.48), ymax=stage("Female - Male", after_scale = ymax+0.58)),
+                    fill="white") +
+    geom_rect(aes(xmin=te_avg,xmax=0.336,ymin=stage("Female - Male", after_scale = ymin-1.48), ymax=stage("Female - Male", after_scale = ymax+0.58)),
+                    fill="white") +
+    stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+    stat_pointinterval(point_interval = "mean_hdci",.width = .95) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) +
+      geom_vline(
+              xintercept = 0,
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = .8)+
+  theme(
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.grid = element_blank(),
+ panel.background = element_rect(
+      fill = "transparent",
+      color = 'black',
+      linewidth = 1.6),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given sex by examining the proportion of posterior draws that met the criteria of interest (e.g., either >0 or >TE)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+# By SEX (ABSOLUTE)
+emmeans(MT_model, ~time+sex, weights = "prop")%>%
+gather_emmeans_draws()%>%
+group_by(sex)%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# By SEX above TE (ABSOLUTE)
+emmeans(MT_model, ~time+sex, weights = "prop")%>%
+gather_emmeans_draws()%>%
+group_by(sex)%>%
+summarise(pd=round(mean(.value>te_avg,na.rm=TRUE)*100,0))
+
+# Contrast for SEX (ABSOLUTE)
+contrast.mt=emmeans(MT_model, ~time+sex)%>%contrast("revpairwise", interaction=TRUE)
+draws.mt=contrast.mt%>%gather_emmeans_draws(value="emmean")
+head(draws.mt)
+(pd=mean(draws.mt$emmean>0)*100)
+
+# Contrast for SEX above TE (ABSOLUTE)
+(pd=mean(draws.mt$emmean>te_avg)*100)
+
+# By SEX (RELATIVE)
+draws.mt.rel=MT_draws_within %>% mutate(rel.emmean=ifelse(sex=="Female",(emmean/MT_F_pre)*100,(emmean/MT_M_pre)*100))%>%
+group_by(sex)%>%
+summarise(pd=round(mean(rel.emmean>0,na.rm=TRUE)*100,0))
+
+# Contrast for SEX (RELATIVE)
+draws.mt.rel=MT_draws_within%>%
+  pivot_wider(id_cols = ".draw",
+              names_from = "sex",
+              values_from = c("emmean","rel.emmean"))%>%
+  mutate(emmean=emmean_Male-emmean_Female,
+         rel.emmean=rel.emmean_Male-rel.emmean_Female)
+head(draws.mt.rel)
+(pd=mean(draws.mt.rel$rel.emmean>0)*100)
+
+# SEX by PROTOCOL (ABSOLUTE)
+emmeans(MT_model, ~time+sex+protocol, weights = "prop")%>%
+gather_emmeans_draws()%>%
+group_by(sex, protocol)%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+# SEX by PROTOCOL (RELATIVE)
+draws.mt.rel=MT_draws_within_P %>% mutate(rel.emmean=ifelse(
+  sex=="Female"&protocol=="FAIL",(emmean/MT_F_pre_FAIL)*100,
+  ifelse(sex=="Female"&protocol=="RIR",(emmean/MT_F_pre_RIR)*100,
+         ifelse(sex=="Male"&protocol=="FAIL",(emmean/MT_M_pre_FAIL)*100,
+                (emmean/MT_F_pre_RIR)*100))))%>%
+group_by(sex, protocol)%>%
+summarise(pd=round(mean(rel.emmean>0,na.rm=TRUE)*100,0))
+
+# Contrast for SEX by PROTOCOL (ABSOLUTE)
+emmeans(MT_model, ~time+sex|protocol)%>%contrast("revpairwise", interaction=TRUE)%>%
+gather_emmeans_draws(value="emmean")%>%
+group_by(protocol)%>%
+summarise(pd=round(mean(emmean>0,na.rm=TRUE)*100,0))
+
+# Contrast for SEX by PROTOCOL (RELATIVE)
+draws.mt.rel=MT_draws_within_P %>% pivot_wider(id_cols = ".draw", names_from = c("sex","protocol"), values_from = c("emmean","rel.emmean"))%>%
+  mutate(emmean_FAIL=emmean_Male_FAIL-emmean_Female_FAIL,emmean_RIR=emmean_Male_RIR-emmean_Female_RIR, rel.emmean_FAIL=rel.emmean_Male_FAIL-rel.emmean_Female_FAIL,rel.emmean_RIR=rel.emmean_Male_RIR-rel.emmean_Female_RIR)
+head(draws.mt.rel)
+(pd=mean(draws.mt.rel$rel.emmean_RIR>0)*100)
+(pd=mean(draws.mt.rel$rel.emmean_FAIL>0)*100)
+
+```
+
+## Loss of lifting velocity
+
+To assess differences in loss of lifting velocity between sexes, a linear model will be generated with the following response variable:
+
+  1) Change in lifting velocity (first to final set) calculated as a percentage value
+  
+Two additional interaction factors will be added into the model:
+
+  1) Time point (WEEK 1, WEEK 4, WEEK 8)
+  2) Protocol (FAIL and RIR)
+  
+This model will account for the absolute lifting velocity of the first set (as this value could influence the percentage change) and the total number of sets performed and will allow us to investigate an interaction effect with protocol and time, which is important, as measurements of lifting velocity were taken at WEEKS 1, 4 and 8 and for each protocol.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of the change in lifting velocity (first to final set) for each sex.
+
+```{r}
+#| label: Bayesian linear modelling
+
+LV_model <- brm(lifting_velocity ~ sex * time * protocol + first_set + sets + (time*protocol+first_set|id) + (1|id:limb),
+                data = vl_master,
+                seed = 123,
+                prior = vl.priors,
+                control = list(adapt_delta=0.99))
+summary(LV_model)
+
+#plot(LV_model) # Preliminary diagnostics
+
+# Sensitivity Analysis (With Non-Informative Prior)
+LV_model_Sens <- brm(lifting_velocity ~ sex * time * protocol + first_set + sets + (time*protocol+first_set|id) + (1|id:limb),
+                data = vl_master,
+                seed = 123,
+                control = list(adapt_delta=0.99))
+summary(LV_model)
+
+```
+
+Calculate Bayesian estimates (and contrast estimates) generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+# Establish denominators
+pre.vl=0.21755
+
+# By SEX
+LV_effects=emmeans(LV_model,~sex)
+
+LV_draws=LV_effects%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+
+LV_abs_estimates=LV_draws%>%
+  mean_hdci(emmean)
+
+LV_rel_estimates=LV_draws%>%
+  mean_hdci(rel.emmean)
+
+## Extract absolute within condition contrasts
+LV_effects_within=LV_effects%>%
+  contrast("consec")
+
+LV_draws_within=LV_effects_within%>%
+  gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+LV_draws_within=LV_draws_within%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+
+LV_estimates_abs_within=LV_draws_within%>%
+  mean_hdci(emmean)
+
+LV_estimates_rel_within=LV_draws_within%>%
+  mean_hdci(rel.emmean)
+
+# By SEX and TIME
+LV_effects_T=emmeans(LV_model,~time+sex)
+
+LV_draws_T=LV_effects_T%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+
+LV_abs_estimates_T=LV_draws_T%>%
+  mean_hdci(emmean)
+
+LV_rel_estimates_T=LV_draws_T%>%
+  mean_hdci(rel.emmean)
+
+## Extract absolute within condition contrasts
+LV_effects_within_T=LV_effects_T%>%
+  contrast("consec",by="time")
+
+LV_draws_within_T=LV_effects_within_T%>%
+  gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+LV_draws_within_T=LV_draws_within_T%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+
+LV_estimates_abs_within_T=LV_draws_within_T%>%
+  mean_hdci(emmean)
+
+LV_estimates_rel_within_T=LV_draws_within_T%>%
+  mean_hdci(rel.emmean)
+
+# By SEX and PROTOCOL
+LV_effects_P=emmeans(LV_model,~protocol+sex)
+
+LV_draws_P=LV_effects_P%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+
+LV_abs_estimates_P=LV_draws_P%>%
+  mean_hdci(emmean)
+
+LV_rel_estimates_P=LV_draws_P%>%
+  mean_hdci(rel.emmean)
+
+## Extract absolute within condition contrasts
+LV_effects_within_P=LV_effects_P%>%
+  contrast("consec",by="protocol")
+
+LV_draws_within_P=LV_effects_within_P%>%
+  gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+LV_draws_within_P=LV_draws_within_P%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+
+LV_estimates_abs_within_P=LV_draws_within_P%>%
+  mean_hdci(emmean)
+
+LV_estimates_rel_within_P=LV_draws_within_P%>%
+  mean_hdci(rel.emmean)
+
+# SENSITIVIY ANALYSIS
+LV_effects_P_Sens=emmeans(LV_model_Sens,~protocol+sex)
+LV_draws_P_Sens=LV_effects_P_Sens%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.vl)*100)
+LV_rel_estimates_P_Sens=LV_draws_P_Sens%>%
+  mean_hdci(rel.emmean)
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot to display posterior distributions for the contrast between sexes for each time point and protocol along with the change overtime. The values generated represent the difference between sexes. Negative values represent smaller decreases in lifting velocity for females versus males.
+
+1) Change overtime
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(data = LV_draws_T,
+       aes(x=time,
+           y=rel.emmean,
+           color=sex,
+           fill=sex))+
+  stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+         stat_summary(fun = 'mean', geom = 'point', size = 5) +
+          scale_color_manual(values = c("#F8766D", "#00BFC4")) +
+    scale_fill_manual(values = alpha(c("#F8766D", "#00BFC4"), 0.5)) +
+  geom_hline(aes(yintercept = 0),
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = 0.8) +
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6))
+
+```
+
+2) Contrast by TIME
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(LV_draws_within_T, aes(x = rel.emmean, y = factor(time, level=c('WEEK 8', 'WEEK 4', 'WEEK 1')), fill =after_stat(x > 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) +
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6))
+
+```
+
+3) Contrast by PROTOCOL
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(LV_draws_within_P, aes(x = rel.emmean, y = factor(protocol, level=c('FAIL', 'RIR')), fill = after_stat(x > 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) +
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6))
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given sex by examining the proportion of posterior draws that met the criteria of interest (e.g., >0)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By sex (RELATIVE)
+draws.lv.rel=LV_draws %>%
+summarise(pd=round(mean(rel.emmean<0,na.rm=TRUE)*100,0))
+
+# By sex and time (RELATIVE)
+draws.lv.rel=LV_draws_T %>%
+group_by(sex,time)%>%
+summarise(pd=round(mean(rel.emmean<0,na.rm=TRUE)*100,0))
+
+# By sex and protocol (RELATIVE)
+draws.lv.rel_P=LV_draws_P %>%
+group_by(sex,protocol)%>%
+summarise(pd=round(mean(rel.emmean<0,na.rm=TRUE)*100,0))
+
+# Contrast for sex (<o) (RELATIVE)
+emmeans(LV_effects_within, ~contrast, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# Contrast for sex by time (<o) (RELATIVE)
+emmeans(LV_effects_within_T, ~time|contrast, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0)) 
+
+# Contrast for sex by protocol(<o) (RELATIVE)
+emmeans(LV_effects_within_P, ~protocol|contrast, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0)) 
+
+```
+
+## Repetition Loss
+
+To assess differences in repetition loss between sexes, a linear model will be generated with the following response variable:
+
+  1) Repetition loss (first to final set) calculated as a percentage value
+  
+Two additional interaction factors will be added into the model:
+
+  1) Time point (Session, Week)
+  2) Protocol (FAIL, RIR)
+
+This model will account for the number of repetitions performed on the first set (which could influence the percentage change), the total number of sets performed, and the exercise, and will allow us to investigate an interaction effect with time and protocol, which is important, as repetition loss may change overtime and between protocols.
+
+### Generate model
+
+We will use `brms` to run the primary linear model to generate Bayesian estimates of repetition loss (first to final set) for each sex.
+
+```{r}
+#| label: Bayesian linear modelling
+
+# Generate model
+RL_model <- brm(rep.change ~ sex * time * protocol + exercise + reps.first + sets + (time * protocol + reps.first + sets + exercise|id) + (time + reps.first + sets + exercise|id:limb),
+            data=rep_loss_master,
+            seed=123,
+            prior = rv.priors,
+            control = list(adapt_delta=0.99))
+summary(RL_model)
+
+#plot(RL_model) # Preliminary diagnostics
+
+# Sensitivity Analysis (With Non-Informative Prior)
+RL_model_Sens <- brm(rep.change ~ sex * time * protocol + exercise + reps.first + sets + (time * protocol + reps.first + sets + exercise|id) + (time + reps.first + sets + exercise|id:limb),
+            data=rep_loss_master,
+            seed=123,
+            control = list(adapt_delta=0.99))
+summary(RL_model)
+
+```
+
+Calculate Bayesian estimates (and contrast estimates) generated from the linear model.
+
+```{r}
+#| label: Bayesian estimates from linear model
+
+## Establish denominators
+pre.rv=10.787
+
+# For SEX only
+RL_effects_S=emmeans(RL_model,
+                ~sex,
+                at=list(time=1:16))
+
+RL_draws_S=RL_effects_S%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+
+RL_estimates_abs_S=RL_draws_S%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_S=RL_draws_S%>%
+  mean_hdci(rel.emmean)
+
+## Extract absolute within condition contrasts
+RL_effects_within_S=RL_effects_S%>%
+  contrast("consec")
+
+RL_draws_within_S=RL_effects_within_S%>%
+  gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+RL_draws_within_S=RL_draws_within_S%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+
+RL_estimates_abs_within_S=RL_draws_within_S%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_within_S=RL_draws_within_S%>%
+  mean_hdci(rel.emmean)
+
+# For SEX and TIME
+RL_effects=emmeans(RL_model,
+                ~time+sex,
+                at=list(time=1:16))
+
+RL_draws=RL_effects%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+
+RL_estimates_abs=RL_draws%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel=RL_draws%>%
+  mean_hdci(rel.emmean)
+
+## Extract absolute within condition contrasts
+RL_effects_within=RL_effects%>%
+  contrast("consec",by="sex")
+
+RL_draws_within=RL_effects_within%>%
+  gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+RL_draws_within=RL_draws_within%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+
+RL_estimates_abs_within=RL_draws_within%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_within=RL_draws_within%>%
+  mean_hdci(rel.emmean)
+
+## Add relative between condition contrasts
+RL_draws_between=RL_draws_within%>%
+  pivot_wider(id_cols = c(".draw","contrast"),
+              names_from = "sex",
+              values_from = c("emmean","rel.emmean"))%>%
+  mutate(emmean=emmean_Male-emmean_Female,
+         rel.emmean=rel.emmean_Male-rel.emmean_Female)
+
+RL_estimates_abs_between=RL_draws_between%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_between=RL_draws_between%>%
+  mean_hdci(rel.emmean)
+
+# For SEX and PROTOCOL
+RL_effects_P=emmeans(RL_model,
+                ~protocol+sex+time,
+                at=list(time=1:16))
+
+RL_draws_P=RL_effects_P%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+
+RL_estimates_abs_P=RL_draws_P%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_P=RL_draws_P%>%
+  mean_hdci(rel.emmean)
+
+## Extract absolute within condition contrasts
+RL_effects_within_P=RL_effects_P%>%
+  contrast("consec",by="protocol")
+
+RL_draws_within_P=RL_effects_within_P%>%
+  gather_emmeans_draws(value = "emmean")
+
+## Add relative within condition contrasts
+RL_draws_within_P=RL_draws_within_P%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+
+RL_estimates_abs_within_P=RL_draws_within_P%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_within_P=RL_draws_within_P%>%
+  mean_hdci(rel.emmean)
+
+## Add relative between condition contrasts
+RL_draws_between_P=RL_draws_within_P%>%
+  pivot_wider(id_cols = c(".draw","contrast"),
+              names_from = "sex",
+              values_from = c("emmean","rel.emmean"))%>%
+  mutate(emmean=emmean_Male-emmean_Female,
+         rel.emmean=rel.emmean_Male-rel.emmean_Female)
+
+RL_estimates_abs_between_P=RL_draws_between_P%>%
+  mean_hdci(emmean)
+
+RL_estimates_rel_between_P=RL_draws_between_P%>%
+  mean_hdci(rel.emmean)
+
+# Means and contrasts of slopes
+RL_trends=emtrends(RL_model,
+         var = "time",
+         pairwise~sex|protocol)
+
+## Mean of slopes for each exercise
+hpd.summary(RL_trends$emtrends, point.est = mean)
+RL_trends_GG=RL_trends$emtrends%>%
+  gather_emmeans_draws() # For ggplot
+
+## Contrast of slopes for each exercise
+hpd.summary(RL_trends$contrasts, point.est = mean)
+RL_contrasts_GG=RL_trends$contrasts%>%
+  gather_emmeans_draws() # For ggplot
+
+# SENSITIVIY ANALYSIS
+RL_effects_P_Sens=emmeans(RL_model_Sens,~protocol+sex)
+RL_draws_P_Sens=RL_effects_P_Sens%>%
+  gather_emmeans_draws(value = "emmean")%>%
+  mutate(rel.emmean=(emmean/pre.rv)*100)
+RL_rel_estimates_P_Sens=RL_draws_P_Sens%>%
+  mean_hdci(rel.emmean)
+
+```
+
+### Model interpretation
+
+To interpret the results in the most complete manner, we will construct a ggplot to display the predicted longitudinal means for each protocol across all sessions completed and for each protocol, along with the contrast of the slopes as a posterior distribution.
+
+1) Predicted longitudinal means for SEX
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(data = RL_draws,
+                 aes(y=rel.emmean,
+                     x=time,
+                     color=sex,
+                     fill=sex))+
+  geom_hline(aes(yintercept = 0),
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = 0.8) +
+  stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+        scale_color_manual(values = c("#F8756D", "#01BFC4")) +
+    scale_fill_manual(values = alpha(c("#F8756D", "#01BFC4"), 0.5)) +
+      theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6),
+      panel.spacing = unit(.4, "cm"))
+
+```
+
+2) Contrast of slopes for SEX
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(RL_contrasts_GG, aes(x = .value, y = factor(protocol, level=c('FAIL', 'RIR')), fill = stat(x < 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+3) By SEX and PROTOCOL
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(data = RL_draws_P,
+                 aes(y=rel.emmean,
+                     x=time,
+                     color=sex,
+                     fill=sex))+
+      facet_grid(~protocol,scales = "free")+
+  geom_hline(aes(yintercept = 0),
+              colour = 'black',
+              linetype = 'dashed',
+              linewidth = 0.8) +
+  stat_lineribbon(point_interval = "mean_hdci",
+                  .width = .95) +
+        scale_color_manual(values = c("#F8756D", "#01BFC4")) +
+    scale_fill_manual(values = alpha(c("#F8756D", "#01BFC4"), 0.5)) +
+      theme(plot.title = element_text(hjust = 0.5),
+    axis.line = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+        axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"),
+    legend.position = "none",
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+      strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    ),
+      panel.grid = element_blank(),
+      panel.background = element_rect(
+      fill = "white",
+      color = 'black',
+      linewidth = 1.6),
+      panel.spacing = unit(.4, "cm"))
+
+```
+
+4) Contrast of slopes for SEX and PROTOCOL
+
+```{r}
+#| label: Construct ggplot
+
+ggplot(VL_contrasts_GG, aes(x = .value, y = factor(exercise, level=c('Leg Extension', 'Leg Press')), fill = stat(x < 0))) + 
+  stat_halfeye(.width = 0.95, point_interval = mean_hdi) + scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  stat_slabinterval(
+    slab_color = "black",
+    slab_linetype = 1,
+    slab_size = 1,
+    point_size = 4.5
+  ) + geom_vline(
+    xintercept = 0,
+    colour = 'black',
+    linetype = 'dashed',
+    linewidth = 0.8
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.line = element_line(size = .8, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    panel.background = element_blank(),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    )
+  )
+
+```
+
+We will now calculate the probability (i.e., percentage value ranging from 0% to 100%) that an estimate is in favour of a given sex by examining the proportion of posterior draws that met the criteria of interest (e.g., >0)
+
+```{r}
+#| label: Calculate results for manuscript reporting
+
+# By sex and protocol (RELATIVE)
+draws.rl.rel_P=RL_draws_P %>%
+group_by(sex,protocol)%>%
+summarise(pd=round(mean(rel.emmean<0,na.rm=TRUE)*100,0))
+
+# Contrast for sex (<o) (RELATIVE)
+emmeans(RL_effects_within_S, ~contrast, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0)) 
+
+# Contrast for sex by protocol(<o) (RELATIVE)
+emmeans(RL_effects_within_P, ~protocol|contrast, weights = "prop")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0)) 
+
+# By sex and protocol
+emtrends(RL_model, pairwise~sex|protocol, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value<0,na.rm=TRUE)*100,0))
+
+# By protocol and exercise (slopes for leg extension >0)
+emtrends(RL_model, pairwise~protocol|exercise, var = "time")%>%
+gather_emmeans_draws()%>%
+summarise(pd=round(mean(.value>0,na.rm=TRUE)*100,0))
+
+```
+
+-----------------------------------------------------------------------------------------------------------------------
+
+DATA ANALYSIS COMPLETE -> Move on to Diagnostics

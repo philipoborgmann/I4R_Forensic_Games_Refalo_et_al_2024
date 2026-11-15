@@ -1,0 +1,577 @@
+---
+title: Bayesian Modeling for Original Research Study Investigating Sex Differences in Muscle Hypertrophy and Neuromuscular Fatigue
+author: Martin Refalo
+output: html
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+
+The primary objectives of this original research study were to examine differences in muscle hypertrophy and neuromuscular fatigue between resistance-trained males and females. Participants in this study had each of their lower limbs randomly assigned to one of two protocols:
+
+  FAIL Protocol: Momentary muscular failure (on every set performed)
+
+  RIR Protocol: Repetitions-in-reserve (perceived 2-RIR on the leg press and 1-RIR on the leg extension)
+
+8-weeks of resistance training was completed, and the following outcome measures will be statistically analysed:
+
+  1) Absolute and relative change in quadriceps thickness (of the rectus femoris and vastus lateralis; averaged result) from pre- to post-intervention
+
+  2) Lifting velocity loss from the first to the final set in WEEK 1, WEEK 4, and WEEK 8
+  
+  3) Repetition loss from the first to the final set in each session of each WEEK for each exercise
+
+We will first conduct exploratory data analyses on each outcome measure to ensure our data does not violate the following assumptions of a standard ANOVA (or ANCOVA) model. The steps on the following webpages will be used to inform the approach for our approach:
+
+  https://www.flutterbys.com.au/stats/tut/tut7.6b.html
+
+  https://www.flutterbys.com.au/stats/tut/tut7.5b.html
+
+We will also visualise the data by constructing ggplots to showcase mean results and individual values (where necessary) to be inserted within the manuscript.
+
+## Load libraries
+
+First we load the libraries we need and set up our working environment.
+
+```{r}
+#| label: Set up environment
+
+library(tidyverse) # Data wrangling, plotting
+library(brms) # Bayesian estimation
+library(tidybayes) # 'Tidy' results
+library(bayesplot) # Convenient plotting
+library(ggridges) # For forest plot
+library(readxl) # To read data files
+library(rstan) # Bayesian modelling
+library(ggplot2) # For plots
+library(posterior)# Posterior distributions
+library(glue) # For plots
+library(ggpubr) # For Plots
+library (bayestestR) # For probability of direction
+library(emmeans) # For contrasts
+library(rstatix) # Assess normality
+library(gt) # Tables
+library(dplyr) # Data frames
+library(ggh4x) # For plots
+library(datawizard) # Data wrangling
+library(patchwork) # For plots
+library(lme4) # Traditional modelling
+library(performance) # Model quality
+
+```
+
+## Muscle hyertrophy 
+
+### Priors specification
+
+This prior specification reflects our weakly held belief that absolute changes in muscle hypertrophy are greater for males versus females (https://osf.io/trz3y/).
+
+```{r}
+#| label: Prior setting
+
+# To inject priors into model
+mt.sample.sd=0.515
+mt.sex.g=1.63
+mt.sex.sd=0.15
+mt.time.g=0.50
+mt.time.sd=0.05
+mt.sex.by.time.g=0.35
+mt.sex.by.time.sd=0.07
+mt.priors=
+  prior("normal(0.83945,0.07725)",coef="sexMale")+
+  prior("normal(0.2575,0.02575)",coef="time")+
+  prior("normal(0.18025,0.03605)",coef="sexMale:time") +
+  prior("normal(0,0.515)",class="b")
+
+```
+
+### Data visualisation
+
+To investigate differences in muscle hypertrophy between sexes, we will combine muscle thickness measurements of the rectus femoris and vastus lateralis to produce an overall measure of the quadriceps hypertrophy experienced across the 8-week resistance training intervention.
+
+### Load data
+
+First, we read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+mt_master_avg <- read_excel("Muscle_Thickness/mt_master_avg.xlsx")
+mt_means_avg <- read_excel("Muscle_Thickness/mt_master_avg.xlsx",3)
+
+mt_diff_mean_avg <- read_excel("Muscle_Thickness/mt_diff_analysis_avg.xlsx",2)
+mt_diff_analysis_avg <- read_excel("Muscle_Thickness/mt_diff_analysis_avg.xlsx")
+
+mt_data=readxl::read_xlsx("Muscle_Thickness/rf_vl_master2.xlsx")%>%
+  mutate_at(c("id","muscle","sex","limb","protocol","scan"),factor)
+head(df)
+
+mt_data.wide=mt_data%>%
+  pivot_wider(id_cols = c("id","muscle","sex","limb","protocol","sets","scan"),
+              names_from = "time",
+              names_prefix = "muscle.thickness.",
+              values_from = "muscle.thickness")%>%
+  mutate(Delta=muscle.thickness.1-muscle.thickness.0)
+head(mt_data.wide)
+
+mt_data.avg=mt_data%>%
+  group_by(id,sex,limb,protocol,time,sets,muscle)%>%
+  summarise(avg.muscle.thickness=mean(muscle.thickness,na.rm = TRUE))
+head(mt_data.avg)
+
+mt_data.avg.wide=mt_data.avg%>%
+  pivot_wider(id_cols = c("id","muscle","sex","limb","protocol","sets"),
+              names_from = "time",
+              names_prefix = "avg.muscle.thickness.",
+              values_from = "avg.muscle.thickness")%>%
+  mutate(Delta=avg.muscle.thickness.1-avg.muscle.thickness.0,
+         Rel.Delta=I(I(I(avg.muscle.thickness.1/avg.muscle.thickness.0)-1)*100))
+head(mt_data.avg.wide)
+
+```
+
+To visualise the pre- to post-intervention change in muscle thickness (RF and VL, averaged) for each sex, we will change the 'mt_master_avg' data sheet to 'long' format and construct a bar plot that also shows individual data points for each participant.
+
+```{r}
+#| label: Preparation and visualisation
+
+# Adjust 'mt_master' data sheet to long format
+mt_master_long <- mt_master_avg %>% 
+  pivot_longer(cols = 4:5,
+               names_to = "time",
+               values_to = "muscle.thickness")
+
+# Prep data for ggplot
+x1 = factor(mt_master_long$time, 
+            levels = c("Pre", "Post"))
+x2 = factor(mt_means_avg$time, levels = c("Pre", "Post"))
+
+# Construct ggplot of pre to post
+ggplot(mt_master_long, aes(x = factor(x1), y = muscle.thickness)) + 
+  facet_grid(~ sex) +
+   stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5) +
+  geom_line(data = mt_master_long,
+            aes(group = id),
+            size = 1,
+            colour = 'grey') +
+  geom_point(
+    data = mt_master_long,
+    aes(group = id, fill = sex),
+    color = "black",
+    shape = 21,
+    size = 4,
+    stroke = 1,
+    position = position_dodge(width = 0)
+  ) +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = c(1, 2, 3, 4)) +
+  coord_cartesian(ylim = c(0.9, 4.2)) +
+  theme(plot.title = element_text(hjust = 0.5)) + theme(
+   panel.background = element_rect(
+      fill = 'white',
+      color = 'black',
+      linewidth = 1.6
+    ),
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(.4, "cm"),
+    axis.title.x = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    legend.position = "none",
+    strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"))
+
+```
+
+We will now calculate the mean difference in muscle thickness (as an absolute and percentage value) from pre- to post-intervention as 'muscle.thickness' along with the associated standard deviation and construct a bar plot to visualise the relative change in muscle thickness results.
+
+```{r}
+#| label: Preparation and visualisation
+
+mt_diff_avg <- # Calculate delta
+  tidyr::spread(mt_master_long, key = 'time', value = 'muscle.thickness') %>% mutate(muscle.thickness = Post - Pre)
+mt_diff_avg %>% group_by(sex) %>% summarise(mean.diff = mean(muscle.thickness), SD.diff = sd(muscle.thickness))
+mt_diff_avg$percent_change  <- (mt_diff_avg$Post - mt_diff_avg$Pre) / mt_diff_avg$Pre * 100
+mt_diff_mean_avg$percent_change <- aggregate(mt_diff_avg$percent_change, list(mt_diff_avg$sex), FUN=mean)
+mt_diff_mean_avg$percent_sd <- mt_diff_mean_avg$sd / mt_diff_mean_avg$muscle.thickness
+
+# Prep data for ggplot
+x1 = factor(mt_diff_avg$sex, levels = c("Female", "Male")) 
+x2 = factor(mt_diff_mean_avg$sex, levels = c("Female", "Male"))
+
+# Construct ggplot of mean change
+ggplot(mt_diff_avg, aes(x = factor(x1), y = percent_change)) + 
+   stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5) +
+    scale_y_continuous(expand = c(0, 0),
+                     breaks = c(5, 10, 15, 20)) +
+      scale_shape_manual(values=c(21,23)) +
+  coord_cartesian(ylim = c(0, 21)) +
+  geom_point(
+    data = mt_diff_avg,
+    aes(group = id, fill = sex),
+    shape = 21,
+    stroke = 1,
+    size = 4,
+    position = position_dodge(width=0.4)
+  ) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.x = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.line.y = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(muscle.thickness~sex, data=mt_diff_avg) # Check normality and variability of data
+
+mt_diff_avg %>% anova_test(muscle.thickness ~ sex*protocol) # Check for homogeneity of regression slope: Is the interaction between the covariate and grouping variable statistically significant? NO.
+   
+```
+
+Based on the visual inspection of plots and anova_test:
+
+  1) There is no evidence of obvious and major non-normality.
+  
+### Calculation of typical error
+
+It may be informative to calculate the proportion of the response (change in muscle thickness) that exceeds the typical error (TE) of our measurement, and thus derive the proportion of the change in muscle thickness (for both protocols) that is unlikely due to measurement error. Many previous research studies simply cite the TE established in other studies that employ the same measurement, however, we chose to conduct two baseline and post-testing measurements to calculate our own TE. This is a more accurate and valid approach to calculating TE, and is specific to our unique measurement device and the skills of the technician conducting the measurements.
+
+We imported our baseline data over two occasions into spreadsheets created by Will Hopkins (https://sportsci.org/2015/ValidRely.htm) to generate calculations of TE.
+
+```{r}
+#| label: TE calculation
+
+te_avg <- 0.055
+
+```
+
+We will accept an overall TE of 0.055cm (averaged over all time points and muscle groups), and therefore, we can reliably detect a change in muscle thickness over the intervention period that is greater than 0.055cm.
+
+## Loss of Lifting Velocity
+
+### Priors specification
+
+This prior specification reflects our weakly held belief that lifting velocity loss (from the first to final set) is larger in males versus females (Refalo et al., 2023).
+
+```{r}
+#| label: Prior setting
+
+# To inject priors into model
+vl.sample.sd=0.0223
+vl.sex.g=0.5286938
+vl.sex.sd=0.557
+vl.other.g=0
+vl.other.sd=1
+vl.priors= 
+  prior("normal(0.01178987,0.02636944)",coef="sexMale")+ 
+  prior("normal(0,0.0223)",class="b")
+ 
+```
+
+### Data visualisation
+
+To investigate differences in neuromuscular fatigue between sexes, the mean lifting velocity (metres per second) of the first three repetitions completed on the leg press sets was calculated to determine the change in mean lifting velocity (calculated as a percentage) from the first to the final set. This measure was calculated at WEEKS 1, 4 and 8.
+
+### Load data
+
+Read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+vl_master <- read_excel("Velocity_Loss/vl_master.xlsx")%>%
+mutate_at(c("id","limb","protocol","sex"),factor)
+
+```
+
+To visualise the change of lifting velocity from the first to the final set for each sex and across all time points we will construct bar plots that show the percentage change in lifting velocity (with individual data points for each participant).
+
+```{r}
+#| label: Preparation and visualisation
+
+x1  = factor(vl_master$protocol, levels=c("FAIL", "RIR"))
+
+ggplot(vl_master, aes(x=sex, y=percent_diff)) +
+    facet_wrap( ~ time) +
+   stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5) +
+        scale_shape_manual(values=c(21,23)) +
+  geom_hline(yintercept=0.00, size = 0.8, linetype = 'dashed') +
+  geom_point(
+    data = vl_master,
+    aes(group = id, fill = sex),
+    shape = 21,
+    stroke = 1,
+    size = 4,
+    position = position_dodge(width=0.4)) +  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+ theme(plot.title = element_text(hjust = 0.5)) + theme(
+    panel.background = element_rect(
+      fill = 'white',
+      color = 'black',
+      linewidth = 1.6
+    ),
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(.4, "cm"),
+    axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    legend.position = "none",
+    strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    )
+  )
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(percent_diff~protocol*sex, data=vl_master) # Check normality and variability of data
+
+boxplot(percent_diff~time*sex, data=vl_master) # Check normality and variability of data
+
+```
+
+Based on the visual inspection of plots:
+
+  1) No evidence that the response is consistently non-normal across all time points and protocols (box plots = ~symmetrical).
+  
+  2) No evidence that variance (estimated by the height of the box plots) differs between sexes and time points/protocols.
+    
+  3) No evidence of a relationship between mean and variance (height of the box plots does not increase with increasing position along the y-axis). Hence, there is no evidence of non-homogeneity.
+
+## Repetition Loss
+
+To investigate differences in repetition loss between sexes, we will calculate the percentage decrease in repetitions from the first to the final set for each session and week of the RT intervention and for each exercise.
+
+### Load data
+
+Read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+rep_loss_master=read_xlsx("Volume/modified.longitudinal.models.xlsx")%>%
+  mutate_at(c("id","limb","protocol","exercise","sex"),factor)
+
+rep_loss_master=rep_loss_master%>%
+  group_by(exercise)%>%
+  center(reps.first)
+
+```
+
+### Priors specification
+
+This prior specification reflects our weakly held belief that repetition loss (from the first to final set) is larger in males versus females (Refalo et al., 2023).
+
+```{r}
+#| label: Prior setting
+
+# To inject priors into model
+rv.sample.sd=2.16
+rv.sex.g=-0.1851638
+rv.sex.sd=1.165
+rv.other.g=0
+rv.other.sd=1
+rv.priors=
+  prior("normal(-0.3999538,2.5164)",coef="sexMale")+
+  prior("normal(0,2.16)",class="b")
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(rep.loss~sex*week, data=rep_loss_master) # Check normality and variability of data
+
+```
+
+Based on the visual inspection of plots:
+
+  1) No evidence that the response is consistently non-normal across all time points (box plots = ~symmetrical).
+  
+  2) No evidence that variance (estimated by the height of the box plots) differs between sexes and time points.
+    
+  3) No evidence of a relationship between mean and variance (height of the box plots does not increase with increasing position along the y-axis). Hence, there is no evidence of non-homogeneity.
+
+## Volume
+
+To visually investigate differences in volume-load and repetition volume between the sexes, the mean values for each measure were obtained for each session and week of the intervention, and for each exercise
+
+### Prepare data and visualise
+
+Read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+vol_load_master <- read_excel("Volume/vol_load_master.xlsx")
+vol_load_means <- read_excel("Volume/vol_load_master.xlsx",2)
+rep_vol_master <- read_excel("Volume/rep_vol_master.xlsx")
+rep_vol_means <- read_excel("Volume/rep_vol_master.xlsx",2)
+
+volume_master <- read_xlsx("Volume/modified.longitudinal.models.xlsx",2)%>%
+  mutate_at(c("id","limb","protocol","exercise","sex"),factor)
+
+```
+
+To visualise volume for each sex we will construct bar plots that show all scores (with individual data points for each participant).
+
+```{r}
+#| label: Preparation and visualisation
+
+# Volume load
+x1  = factor(vol_load_master$exercise, levels=c("Leg Press", "Leg Extension"))
+x2 = factor(vol_load_means$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(vol_load_master, aes(x=factor(x1), y=vol_load, fill=sex)) +
+ stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5, position = position_dodge(.8)) + 
+        geom_point(data = vol_load_master, aes(x=factor(x1), fill=sex), shape=21,stroke=1, size=4, position=position_jitterdodge(dodge.width=0.8, jitter.width = 0.2)) +
+  scale_y_continuous(expand = c(0, 0), breaks = c(250,500,750,1000,1250)) +
+  coord_cartesian(ylim = c(0, 1355)) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.x = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.line.y = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = .8, colour = "black"),
+    axis.ticks.x=element_blank(),
+    axis.text.x=element_blank(),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    panel.background = element_blank()
+  )
+
+# Repetition volume
+x1  = factor(rep_vol_master$exercise, levels=c("Leg Press", "Leg Extension"))
+x2 = factor(rep_vol_means$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(rep_vol_master, aes(x=factor(x1), y=rep_vol, fill=sex)) +
+stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5, position = position_dodge(.8)) +
+        geom_point(data = rep_vol_master, aes(x=factor(x1), fill=sex), shape=21,stroke=1, size=4, position=position_jitterdodge(dodge.width=0.8, jitter.width = 0.2)) +
+  scale_y_continuous(expand = c(0, 0), breaks = c(25,50,75,100)) +
+  coord_cartesian(ylim = c(0, 110)) +
+ theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.x = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.line.y = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(volume.load~sex*week, data=volume_master) # Check normality and variability of data
+boxplot(repetitions~sex*week, data=volume_master) # Check normality and variability of data
+
+```
+
+Based on the visual inspection of plots:
+
+  1) No evidence that the response is consistently non-normal across all time points (box plots = ~symmetrical).
+  
+  2) Some evidence that variance (estimated by the height of the box plots) differs between sexes but not time points.
+    
+  3) No evidence of a relationship between mean and variance (height of the box plots does not increase with increasing position along the y-axis). Hence, there is no evidence of non-homogeneity.
+
+-----------------------------------------------------------------------------------------------------------------------
+
+DATA PREPARATION COMPLETE -> Move on to Data Analysis.

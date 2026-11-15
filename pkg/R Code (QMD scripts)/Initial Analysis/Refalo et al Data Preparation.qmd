@@ -1,0 +1,500 @@
+---
+title: Bayesian Modeling for Original Research Study Investigating the Influence of PTF on Quadriceps Hypertrophy
+author: Martin Refalo
+output: html
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+
+The primary objectives of this original research study were to examine the influence of RT proximity-to-failure, determined by repetitions-in-reserve (RIR), on muscle hypertrophy, neuromuscular fatigue, and perceptual responses. A unilateral within subject design was employed to compare the following resistance training protocols (completed on the leg press and leg extension exercises) that were randomly assigned to a lower limb:
+
+  FAIL Protocol: Momentary muscular failure (on every set performed)
+
+  RIR Protocol: Repetitions-in-reserve (perceived 2-RIR on the leg press and 1-RIR on the leg extension)
+
+8-weeks of resistance training was completed, and the following outcome measures will be statistically analysed:
+
+  1) Absolute change in muscle thickness (of the rectus femoris and vastus lateralis; averaged result and individual muscle results) from pre- to post-intervention
+
+  2) Lifting velocity loss from the first to the final set in WEEK 1, WEEK 4, and WEEK 8
+  
+  3) Repetition loss from the first to the final set in each session of each WEEK for each exercise
+  
+  4) Volume load and repetition volume completed in each session of each week for each exercise
+  
+We will first conduct exploratory data analyses on each outcome measure to ensure our data does not violate the following assumptions of a standard ANOVA (or ANCOVA) model. The steps on the following webpages will be used to inform the approach for our approach:
+
+  https://www.flutterbys.com.au/stats/tut/tut7.6b.html
+
+  https://www.flutterbys.com.au/stats/tut/tut7.5b.html
+
+We will also visualise the data by constructing ggplots to showcase mean results and individual values (where necessary) to be inserted within the manuscript.
+
+## Priors specification
+
+We will be using non-informative priors (i.e., default `brms` priors) for this Bayesian analysis, as such, no prior specifications are required.
+
+## Load libraries
+
+First we load the libraries we need and set up our working environment.
+
+```{r}
+#| label: Set up environment
+
+library(tidyverse) # Data wrangling, plotting
+library(brms) # Bayesian estimation
+library(tidybayes) # 'Tidy' results
+library(bayesplot) # Convenient plotting
+library(ggridges) # For forest plot
+library(readxl) # To read data files
+library(rstan) # Bayesian modelling
+library(ggplot2) # For plots
+library(posterior)# Posterior distributions
+library(glue) # For plots
+library(ggpubr) # For Plots
+library (bayestestR) # For probability of direction
+library(emmeans) # For contrasts
+library(rstatix) # Assess normality
+library(gt) # Tables
+library(dplyr) # Data frames
+library(ggh4x) # For plots
+library(datawizard) # Data wrangling
+library(patchwork) # For plots
+library(lme4) # Traditional modelling
+library(performance) # Model quality
+
+```
+
+## Muscle hyertrophy 
+
+### Data visualisation
+
+To investigate differences in muscle hypertrophy between the FAIL and RIR protocols, we will combine muscle thickness measurements of the rectus femoris and vastus lateralis to produce an overall measure of the quadriceps hypertrophy experienced across the 8-week resistance training intervention.
+
+First, we read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+mt_master_avg <- read_excel("Muscle_Thickness/mt_master_avg.xlsx")
+mt_means_avg <- read_excel("Muscle_Thickness/mt_means_avg.xlsx")
+
+mt_diff_mean_avg <- read_excel("Muscle_Thickness/mt_diff_mean_avg.xlsx")
+mt_diff_analysis_avg <- read_excel("Muscle_Thickness/mt_diff_analysis_avg.xlsx")
+
+rf_vl_master <- read_xlsx("Muscle_Thickness/rf_vl_master.xlsx")%>%
+  mutate_at(c("id","limb","protocol","muscle","sex"),factor)
+rf_vl_master=rf_vl_master%>%
+  group_by(muscle)%>%
+  center(Pre)
+
+rf_vl_means <- read_xlsx("Muscle_Thickness/rf_vl_means.xlsx")
+
+```
+
+To visualise the pre- to post-intervention change in muscle thickness (RF and VL, averaged) for both protocols, we will change the 'mt_master_avg' data sheet to 'long' format and construct a bar plot that also shows individual data points for each participant.
+
+```{r}
+#| label: Preparation and visualisation
+
+# Adjust 'mt_master' data sheet to long format
+mt_master_long <- mt_master_avg %>% 
+  pivot_longer(cols = 4:5,
+               names_to = "time",
+               values_to = "muscle.thickness")
+
+# Prep data for ggplot
+x1 = factor(mt_master_long$time, 
+            levels = c("Pre", "Post"))
+x2 = factor(mt_means_avg$time, levels = c("Pre", "Post"))
+
+# Construct ggplot of pre to post
+ggplot(mt_master_long, aes(x = factor(x1), y = muscle.thickness)) + 
+  facet_grid(~ protocol) +
+   stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5) +
+  geom_line(data = mt_master_long,
+            aes(group = id),
+            size = 1,
+            colour = 'grey') +
+  geom_point(
+    data = mt_master_long,
+    aes(group = id, fill = protocol),
+    shape = 21,
+    size = 4,
+    stroke = 1,
+    position = position_dodge(width = 0)
+  ) +
+  scale_fill_manual(values = c("#E74C3C", "#3498DB")) +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = c(1, 2, 3, 4)) +
+  coord_cartesian(ylim = c(0.9, 4.2)) +
+  theme(plot.title = element_text(hjust = 0.5)) + theme(
+   panel.background = element_rect(
+      fill = 'white',
+      color = 'black',
+      linewidth = 1.6
+    ),
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(.4, "cm"),
+    axis.title.x = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    legend.position = "none",
+    strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"))
+
+```
+
+We will now calculate the mean difference in muscle thickness (as an absolute and percentage value) from pre- to post-intervention as 'muscle.thickness' along with the associated standard deviation and construct a bar plot to visualise the results.
+
+```{r}
+#| label: Preparation and visualisation
+
+mt_diff_avg <- # Calculate delta
+  tidyr::spread(mt_master_long, key = 'time', value = 'muscle.thickness') %>% mutate(muscle.thickness = Post - Pre)
+mt_diff_avg %>% group_by(protocol) %>% summarise(mean.diff = mean(muscle.thickness), SD.diff = sd(muscle.thickness))
+mt_diff_avg$percent_change  <- (mt_diff_avg$Post - mt_diff_avg$Pre) / mt_diff_avg$Pre * 100
+mt_diff_mean_avg$percent_change <- aggregate(mt_diff_avg$percent_change, list(mt_diff_avg$protocol), FUN=mean)
+mt_diff_mean_avg$percent_sd <- mt_diff_mean_avg$sd / mt_diff_mean_avg$muscle.thickness
+
+# Prep data for ggplot
+x1 = factor(mt_diff_avg$protocol, levels = c("FAIL", "RIR")) 
+x2 = factor(mt_diff_mean_avg$protocol, levels = c("FAIL", "RIR"))
+
+# Construct ggplot of mean change
+ggplot(mt_diff_avg, aes(x = factor(x1), y = percent_change)) + 
+   stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5) +
+  scale_fill_manual(values = c("#EE4B2B", "#0096FF")) +
+    scale_y_continuous(expand = c(0, 0),
+                     breaks = c(5, 10, 15, 20)) +
+  coord_cartesian(ylim = c(0, 21)) +
+  geom_point(
+    data = mt_diff_avg,
+    aes(group = id, fill = protocol),
+    shape = 21,
+    stroke = 1,
+    size = 4,
+    position = position_dodge(width=0.3)
+  ) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.x = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.line.y = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"
+    ),
+    axis.ticks = element_line(size = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.position = "none",
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    panel.background = element_blank()
+  )
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(muscle.thickness~protocol, data=mt_diff_avg) # Check normality and variability of data
+
+ggplot(mt_diff_avg, aes(y = muscle.thickness, x = Pre, group = protocol)) + geom_point() + geom_smooth(method = "lm") # Check for approximately linear relationship between response variable and covariate
+
+mt_diff_avg %>% anova_test(muscle.thickness ~ protocol*Pre) # Check for homogeneity of regression slope: Is the interaction between the covariate and grouping variable statistically significant? NO.
+   
+```
+
+Based on the visual inspection of plots and anova_test:
+
+  1) There is no evidence of obvious and major non-normality.
+  
+  2) The assumption of linearity seems reasonable.
+  
+  3) The variability of the two groups seems approximately equal.
+  
+  4) The slopes appear broadly similar to each other.
+  
+  5) There is very little evidence to suggest that the assumption of equal slopes will be inappropriate.
+
+### Calculation of typical error
+
+It may be informative to calculate the proportion of the response (change in muscle thickness) that exceeds the typical error (TE) of our measurement, and thus derive the proportion of the change in muscle thickness (for both protocols) that is unlikely due to measurement error. Many previous research studies simply cite the TE established in other studies that employ the same measurement, however, we chose to conduct two baseline and post-testing measurements to calculate our own TE. This is a more accurate and valid approach to calculating TE, and is specific to our unique measurement device and the skills of the technician conducting the measurements.
+
+We imported our baseline data over two occasions into spreadsheets created by Will Hopkins (https://sportsci.org/2015/ValidRely.htm) to generate calculations of TE.
+
+```{r}
+#| label: TE calculation
+
+pre_vl_te <- 0.07
+pre_rf_te <- 0.05
+post_vl_te <- 0.06
+post_rf_te <- 0.04
+
+te_avg <- 0.055
+rf_te_avg <- 0.045
+vl_te_avg <- 0.065
+
+```
+
+We will accept an overall TE of 0.055cm (averaged over all time points and muscle groups), and therefore, we can reliably detect a change in muscle thickness over the intervention period that is greater than 0.055cm. However, when looking at individual muscles, we will accept a TE of 0.045cm for the RF and 0.065cm for the VL (averaged over all time points).
+
+## Lifting Velocity
+
+To investigate differences in neuromuscular fatigue between the FAIL and RIR protocols, the mean lifting velocity (metres per second) of the first three repetitions completed on the leg press sets was calculated to determine the change in mean lifting velocity (calculated as a percentage) from the first to the final set. This measure was calculated at WEEKS 1, 4 and 8.
+
+### Data visualisation
+
+Read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+vl_master <- read_excel("Velocity_Loss/vl_master.xlsx")%>%
+mutate_at(c("id","limb","protocol","time","sex"),factor)
+
+vl_means <- read_excel("Velocity_Loss/vl_means.xlsx")
+
+```
+
+To visualise the change of lifting velocity from the first to the final set for each protocol and across all time points we will construct bar plots that show the percentage change in lifting velocity (with individual data points for each participant).
+
+```{r}
+#| label: Preparation and visualisation
+
+x1  = factor(vl_master$protocol, levels=c("FAIL", "RIR"))
+x2 = factor(vl_means$protocol, levels=c("FAIL", "RIR"))
+
+ggplot(vl_master, aes(x=factor(x1), y=percent_diff)) +
+    facet_wrap( ~ time) +
+   stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5) +
+  geom_hline(yintercept=0.00, size = 0.8, linetype = 'dashed') +
+  geom_point(data = vl_master, aes(group=id, fill=protocol), shape=21,stroke=1, size=4, position=position_dodge(width=0.4)) +
+    scale_fill_manual(values=c("#E74C3C", "#3498DB")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+ theme(plot.title = element_text(hjust = 0.5)) + theme(
+    panel.background = element_rect(
+      fill = 'white',
+      color = 'black',
+      linewidth = 1.6
+    ),
+    strip.background = element_rect(
+      color = "black",
+      fill = "black",
+      linetype = "solid"
+    ),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(.4, "cm"),
+    axis.title.x = element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    legend.position = "none",
+    strip.text.x = element_text(
+      family = "Helvetica",
+      size = 13,
+      color = "white",
+      face = "bold"
+    )
+  )
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(percent_diff~protocol*time, data=vl_master) # Check normality and variability of data
+
+```
+
+Based on the visual inspection of plots:
+
+  1) No evidence that the response is consistently non-normal across all time points (box plots = ~symmetrical).
+  
+  2) No evidence that variance (estimated by the height of the box plots) differs between protocols and time points.
+    
+  3) No evidence of a relationship between mean and variance (height of the box plots does not increase with increasing position along the y-axis). Hence, there is no evidence of non-homogeneity.
+
+## Repetition Loss
+
+To investigate differences in repetition loss between the FAIL and RIR protocols, we will calculate the percentage decrease in repetitions from the first to the final set for each SESSION and WEEK of the RT intervention and for each EXERCISE.
+
+### Load data
+
+Read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+rep_loss_master=read_xlsx("Volume/modified.longitudinal.models.xlsx")%>%
+  mutate_at(c("id","limb","protocol","exercise","sex"),factor)
+
+rep_loss_master=rep_loss_master%>%
+  group_by(exercise)%>%
+  center(reps.first)
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(rep.loss~protocol*week, data=rep_loss_master) # Check normality and variability of data
+
+```
+
+Based on the visual inspection of plots:
+
+  1) No evidence that the response is consistently non-normal across all time points (box plots = ~symmetrical).
+  
+  2) No evidence that variance (estimated by the height of the box plots) differs between protocols and time points.
+    
+  3) No evidence of a relationship between mean and variance (height of the box plots does not increase with increasing position along the y-axis). Hence, there is no evidence of non-homogeneity.
+
+## Volume
+
+To investigate differences in volume-load and repetition volume between the FAIL and RIR protocols, the mean values for each measure were obtained for each SESSION and WEEK of the intervention, and for each EXERCISE.
+
+### Prepare data and visualise
+
+Read in the data extraction files.
+
+```{r}
+#| label: Read the data
+
+vol_load_master <- read_excel("Volume/vol_load_master.xlsx")
+vol_load_means <- read_excel("Volume/vol_load_means.xlsx")
+rep_vol_master <- read_excel("Volume/rep_vol_master.xlsx")
+rep_vol_means <- read_excel("Volume/rep_vol_means.xlsx")
+
+volume_master <- read_xlsx("Volume/modified.longitudinal.models.xlsx",2)%>%
+  mutate_at(c("id","limb","protocol","exercise","sex"),factor)
+
+```
+
+To visualise volume for each protocol we will construct bar plots that show all scores (with individual data points for each participant).
+
+```{r}
+#| label: Preparation and visualisation
+
+x1  = factor(vol_load_master$exercise, levels=c("Leg Press", "Leg Extension"))
+x2 = factor(vol_load_means$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(vol_load_master, aes(x=factor(x1), y=vol_load, fill=protocol)) +
+ stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5, position = position_dodge(.8)) + scale_fill_manual(values=c("#E74C3C", "#3498DB")) +
+        geom_point(data = vol_load_master, aes(x=factor(x1), fill=protocol), shape=21,stroke=1, size=4, position=position_jitterdodge(dodge.width=0.8, jitter.width = 0.2)) +
+  scale_y_continuous(expand = c(0, 0), breaks = c(250,500,750,1000,1250)) +
+  coord_cartesian(ylim = c(0, 1355)) +
+  theme(plot.title = element_text(hjust = 0.5)) + theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_blank(),
+    axis.line = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"),
+    axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    legend.position = "none"
+  )
+
+x1  = factor(rep_vol_master$exercise, levels=c("Leg Press", "Leg Extension"))
+x2 = factor(rep_vol_means$exercise, levels=c("Leg Press", "Leg Extension"))
+
+ggplot(rep_vol_master, aes(x=factor(x1), y=rep_vol, fill=protocol)) +
+stat_summary(fun = 'mean', geom = 'crossbar', width = 0.6, linewidth = 1.5, position = position_dodge(.8)) + scale_fill_manual(values=c("#E74C3C", "#3498DB")) +
+        geom_point(data = rep_vol_master, aes(x=factor(x1), fill=protocol), shape=21,stroke=1, size=4, position=position_jitterdodge(dodge.width=0.8, jitter.width = 0.2)) +
+  scale_y_continuous(expand = c(0, 0), breaks = c(25,50,75,100)) +
+  coord_cartesian(ylim = c(0, 110)) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_blank(),
+    axis.line = element_line(
+      linetype = "solid",
+      size = .8,
+      colour = "black"),
+    axis.ticks = element_line(linewidth = .8, colour = "black"),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 12,
+      colour = "black"
+    ),
+    legend.position = "none"
+  )
+
+```
+
+### Check model assumptions
+
+We will conduct an exploratory data analysis to ensure our data do not violate model assumptions.
+
+```{r}
+#| label: Assess data assumptions
+
+boxplot(volume.load~protocol*week, data=volume_master) # Check normality and variability of data
+boxplot(repetitions~protocol*week, data=volume_master) # Check normality and variability of data
+
+```
+
+Based on the visual inspection of plots:
+
+  1) No evidence that the response is consistently non-normal across all time points (box plots = ~symmetrical).
+  
+  2) No evidence that variance (estimated by the height of the box plots) differs between protocols and time points.
+    
+  3) No evidence of a relationship between mean and variance (height of the box plots does not increase with increasing position along the y-axis). Hence, there is no evidence of non-homogeneity.
+
+-----------------------------------------------------------------------------------------------------------------------
+
+DATA PREPARATION COMPLETE -> Move on to Data Analysis.

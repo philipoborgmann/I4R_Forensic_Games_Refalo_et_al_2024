@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Please cite this audit package and include the commit identifier used. Cite Refalo et al. (2024) separately for the original study and materials."
+title: "I4R Forensic Games: Audit of Refalo et al. (2024)"
+type: software
+authors:
+  - name: "philipoborgmann"
+    website: "https://github.com/philipoborgmann"
+repository-code: "https://github.com/philipoborgmann/I4R_Forensic_Games_Refalo_et_al_2024"
+url: "https://github.com/philipoborgmann/I4R_Forensic_Games_Refalo_et_al_2024"
+date-released: 2026-11-15
